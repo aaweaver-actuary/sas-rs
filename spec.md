@@ -39,6 +39,10 @@ This will be accomplished by:
 24. Regression tests for edge cases such as wide rows, unusual strings, and many-page datasets
 25. Proof that lazy read and bounded-memory behavior still hold once broader format support is added
 26. Proof that streaming behavior remains correct even when metadata, compression, and value decoding become more complex
+27. All datasets inside the `sample-sas-datasets` directory are readable by the final implementation
+28. Benchmarking is done on representative datasets from the `sample-sas-datasets` directory, and the results are documented in the journal
+  - `fts0003.sas7bdat` is required to be part of the benchmark suite. While it is not "real" in the sense of measuring anything in particular, it is often used as a benchmark in other implementations, since it has > 1000 columns and > 1M rows, making it a good test of performance on wide and large datasets
+  - several other datasets from the `sample-sas-datasets` directory are also included in the benchmark suite, to ensure that we are not overfitting to a single dataset, and are representative of the variety of data types, encodings, formats, and compression schemes we encounter in the wild
 
 ## Starting point
 
