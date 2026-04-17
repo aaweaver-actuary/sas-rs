@@ -5,6 +5,64 @@ use sas_rs::parser::contracts::{
     ColumnKind, ColumnMetadata, NumericValue, ParsedValue, ParserInput, SemanticTypeHint,
 };
 use sas_rs::parser::{Sas7bdatParser, SupportedSas7bdatParser};
+use std::fs::File;
+use std::path::PathBuf;
+
+#[derive(Debug)]
+enum RealFileProbeOutcome {
+    Readable {
+        row_count: usize,
+        decoded_rows: usize,
+    },
+    Unsupported {
+        stage: &'static str,
+        detail: String,
+    },
+}
+
+fn fts0003_path() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("sample-sas-datasets")
+        .join("fts0003.sas7bdat")
+}
+
+fn probe_fts0003_via_parser_entrypoint() -> RealFileProbeOutcome {
+    let path = fts0003_path();
+    let path_display = path.display().to_string();
+    let file = File::open(&path).expect("fts0003 fixture should be readable from disk");
+    let parser = SupportedSas7bdatParser;
+
+    let mut parsed = match parser.parse(ParserInput::from_reader(&path_display, file)) {
+        Ok(parsed) => parsed,
+        Err(error) => {
+            return RealFileProbeOutcome::Unsupported {
+                stage: "parse",
+                detail: format!("{error:?}"),
+            };
+        }
+    };
+
+    let row_count = parsed.metadata.row_count;
+    let mut decoded_rows = 0;
+
+    loop {
+        match parsed.next_batch(1_024) {
+            Ok(Some(batch)) => decoded_rows += batch.rows.len(),
+            Ok(None) => {
+                return RealFileProbeOutcome::Readable {
+                    row_count,
+                    decoded_rows,
+                };
+            }
+            Err(error) => {
+                return RealFileProbeOutcome::Unsupported {
+                    stage: "decode",
+                    detail: format!("{error:?}"),
+                };
+            }
+        }
+    }
+}
 
 #[test]
 fn parser_decodes_metadata_and_batches_from_the_supported_subset_fixture() {
@@ -211,4 +269,27 @@ fn parser_preserves_non_8_byte_numeric_cells_without_parser_core_rejection() {
             ParsedValue::String("ABCD".to_string()),
         ]
     );
+}
+
+#[test]
+fn parser_reads_the_real_fts0003_file_through_the_existing_entrypoint() {
+    match probe_fts0003_via_parser_entrypoint() {
+        RealFileProbeOutcome::Readable {
+            row_count,
+            decoded_rows,
+        } => assert_eq!(
+            decoded_rows, row_count,
+            "if fts0003 becomes readable, the real-file probe should drain the full streamed decode path"
+        ),
+        RealFileProbeOutcome::Unsupported { stage, detail } => {
+            assert_eq!(
+                stage, "parse",
+                "current baseline should fail at parse rather than during streamed decode"
+            );
+            assert_eq!(
+                detail, "Unsupported(WordSize(Bit32))",
+                "the real-file probe should capture the current unsupported readability boundary explicitly"
+            );
+        }
+    }
 }
