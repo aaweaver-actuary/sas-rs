@@ -24,10 +24,8 @@ const HEADER_SIZE_OFFSET: usize = 196;
 const PAGE_SIZE_OFFSET: usize = 200;
 const PAGE_COUNT_OFFSET: usize = 204;
 const HEADER_PREFIX_LEN: usize = PAGE_COUNT_OFFSET + 8;
-const PAGE_HEADER_SIZE_64: usize = 40;
-const SUBHEADER_POINTER_SIZE_64: usize = 24;
-const SIGNATURE_SIZE_64: usize = 8;
 
+const SAS_ALIGNMENT_OFFSET_0: u8 = 0x00;
 const SAS_ALIGNMENT_OFFSET_4: u8 = 0x33;
 const SAS_ENDIAN_BIG: u8 = 0x00;
 const SAS_ENDIAN_LITTLE: u8 = 0x01;
@@ -180,6 +178,105 @@ struct SubheaderPointer {
     compression: u8,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct DecodeLayout {
+    word_size: WordSize,
+    endianness: Endianness,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct RowSizeOffsets {
+    row_length: usize,
+    row_count: usize,
+}
+
+impl DecodeLayout {
+    fn from_header_prefix(header_prefix: &[u8]) -> Result<Self, ParserError> {
+        let word_size = match header_prefix[WORD_SIZE_OFFSET] {
+            SAS_ALIGNMENT_OFFSET_0 => WordSize::Bit32,
+            SAS_ALIGNMENT_OFFSET_4 => WordSize::Bit64,
+            _ => {
+                return Err(ParserError::InvalidFormat(
+                    "invalid sas7bdat word-size flag",
+                ));
+            }
+        };
+        let endianness = match header_prefix[ENDIANNESS_OFFSET] {
+            SAS_ENDIAN_LITTLE => Endianness::Little,
+            SAS_ENDIAN_BIG => Endianness::Big,
+            _ => {
+                return Err(ParserError::InvalidFormat(
+                    "invalid sas7bdat endianness flag",
+                ));
+            }
+        };
+
+        Ok(Self {
+            word_size,
+            endianness,
+        })
+    }
+
+    fn from_subset(subset: SupportedSubset) -> Self {
+        Self {
+            word_size: subset.word_size,
+            endianness: subset.endianness,
+        }
+    }
+
+    fn word_size_bytes(self) -> usize {
+        match self.word_size {
+            WordSize::Bit32 => 4,
+            WordSize::Bit64 => 8,
+        }
+    }
+
+    fn page_header_size(self) -> usize {
+        match self.word_size {
+            WordSize::Bit32 => 24,
+            WordSize::Bit64 => 40,
+        }
+    }
+
+    fn subheader_pointer_size(self) -> usize {
+        match self.word_size {
+            WordSize::Bit32 => 12,
+            WordSize::Bit64 => 24,
+        }
+    }
+
+    fn subheader_data_offset(self) -> usize {
+        match self.word_size {
+            WordSize::Bit32 => 4,
+            WordSize::Bit64 => 8,
+        }
+    }
+
+    fn column_attrs_entry_size(self) -> usize {
+        self.word_size_bytes() + 8
+    }
+
+    fn row_size_offsets(self) -> RowSizeOffsets {
+        match self.word_size {
+            WordSize::Bit32 => RowSizeOffsets {
+                row_length: 20,
+                row_count: 24,
+            },
+            WordSize::Bit64 => RowSizeOffsets {
+                row_length: 40,
+                row_count: 48,
+            },
+        }
+    }
+
+    fn read_word(self, bytes: &[u8], offset: usize) -> Result<u64, ParserError> {
+        match self.word_size {
+            WordSize::Bit32 => Ok(read_u32(bytes, offset, self.endianness)? as u64),
+            WordSize::Bit64 => read_u64(bytes, offset, self.endianness),
+        }
+    }
+}
+
 fn parse_supported_subset(mut input: ParserInput<'_>) -> Result<ParsedSas7bdat, ParserError> {
     let mut header_prefix = vec![0_u8; HEADER_PREFIX_LEN];
     input
@@ -191,28 +288,7 @@ fn parse_supported_subset(mut input: ParserInput<'_>) -> Result<ParsedSas7bdat, 
         return Err(ParserError::InvalidFormat("missing sas7bdat magic number"));
     }
 
-    match header_prefix[WORD_SIZE_OFFSET] {
-        SAS_ALIGNMENT_OFFSET_4 => {}
-        _ => {
-            return Err(ParserError::Unsupported(UnsupportedFeature::WordSize(
-                WordSize::Bit32,
-            )));
-        }
-    }
-
-    match header_prefix[ENDIANNESS_OFFSET] {
-        SAS_ENDIAN_LITTLE => {}
-        SAS_ENDIAN_BIG => {
-            return Err(ParserError::Unsupported(UnsupportedFeature::Endianness(
-                Endianness::Big,
-            )));
-        }
-        _ => {
-            return Err(ParserError::InvalidFormat(
-                "invalid sas7bdat endianness flag",
-            ));
-        }
-    }
+    let layout = DecodeLayout::from_header_prefix(&header_prefix)?;
 
     if header_prefix[ENCODING_OFFSET] != UTF8_ENCODING_CODE {
         return Err(ParserError::Unsupported(UnsupportedFeature::Encoding(
@@ -220,9 +296,9 @@ fn parse_supported_subset(mut input: ParserInput<'_>) -> Result<ParsedSas7bdat, 
         )));
     }
 
-    let header_size = read_u32(&header_prefix, HEADER_SIZE_OFFSET)? as usize;
-    let page_size = read_u32(&header_prefix, PAGE_SIZE_OFFSET)? as usize;
-    let page_count = read_u64(&header_prefix, PAGE_COUNT_OFFSET)? as usize;
+    let header_size = read_u32(&header_prefix, HEADER_SIZE_OFFSET, layout.endianness)? as usize;
+    let page_size = read_u32(&header_prefix, PAGE_SIZE_OFFSET, layout.endianness)? as usize;
+    let page_count = layout.read_word(&header_prefix, PAGE_COUNT_OFFSET)? as usize;
 
     if header_size < 1024 || page_size < 1024 {
         return Err(ParserError::InvalidFormat(
@@ -257,9 +333,18 @@ fn parse_supported_subset(mut input: ParserInput<'_>) -> Result<ParsedSas7bdat, 
     let mut data_pages = Vec::new();
 
     for page_index in 0..page_count {
-        let page_header =
-            read_page_header(input.reader.as_mut(), header_size, page_size, page_index)?;
-        let page_type = read_u16(&page_header, PAGE_HEADER_SIZE_64 - 8)?;
+        let page_header = read_page_header(
+            input.reader.as_mut(),
+            header_size,
+            page_size,
+            page_index,
+            layout,
+        )?;
+        let page_type = read_u16(
+            &page_header,
+            layout.page_header_size() - 8,
+            layout.endianness,
+        )?;
         if (page_type & SAS_PAGE_TYPE_COMP) != 0 {
             return Err(ParserError::Unsupported(UnsupportedFeature::Compression(
                 CompressionMode::Binary,
@@ -269,7 +354,7 @@ fn parse_supported_subset(mut input: ParserInput<'_>) -> Result<ParsedSas7bdat, 
         match page_type & SAS_PAGE_TYPE_MASK {
             SAS_PAGE_TYPE_META => {
                 let page = read_page(input.reader.as_mut(), header_size, page_size, page_index)?;
-                parse_meta_page(&page, &mut metadata)?;
+                parse_meta_page(&page, &mut metadata, layout)?;
             }
             SAS_PAGE_TYPE_DATA => data_pages.push(page_index),
             other => {
@@ -288,7 +373,11 @@ fn parse_supported_subset(mut input: ParserInput<'_>) -> Result<ParsedSas7bdat, 
 
     let columns = finalize_columns(&metadata)?;
     let dataset_metadata = SasMetadata {
-        subset: SUPPORTED_SUBSET,
+        subset: contracts::supported_subset(
+            layout.word_size,
+            layout.endianness,
+            CompressionMode::None,
+        ),
         table_name: metadata.table_name.clone(),
         file_label: metadata.file_label.clone(),
         row_count: metadata.row_count,
@@ -351,6 +440,7 @@ impl ParsedSas7bdat {
     }
 
     fn load_next_data_page(&mut self) -> Result<(), ParserError> {
+        let layout = DecodeLayout::from_subset(self.metadata.subset);
         let page_index =
             *self
                 .data_pages
@@ -366,8 +456,9 @@ impl ParsedSas7bdat {
             self.metadata.page_size,
             page_index,
         )?;
-        let page_row_count = read_u16(&page, PAGE_HEADER_SIZE_64 - 6)? as usize;
-        let data = &page[PAGE_HEADER_SIZE_64..];
+        let page_row_count =
+            read_u16(&page, layout.page_header_size() - 6, layout.endianness)? as usize;
+        let data = &page[layout.page_header_size()..];
 
         for row_index in 0..page_row_count {
             if self.decoded_row_count() == self.metadata.row_count {
@@ -394,14 +485,18 @@ impl ParsedSas7bdat {
     }
 }
 
-fn parse_meta_page(page: &[u8], metadata: &mut PartialMetadata) -> Result<(), ParserError> {
-    let pointers = parse_subheader_pointers(page)?;
+fn parse_meta_page(
+    page: &[u8],
+    metadata: &mut PartialMetadata,
+    layout: DecodeLayout,
+) -> Result<(), ParserError> {
+    let pointers = parse_subheader_pointers(page, layout)?;
 
     for pointer in &pointers {
         let subheader = subheader_slice(page, *pointer)?;
-        let signature = read_u32(subheader, 0)?;
+        let signature = read_u32(subheader, 0, layout.endianness)?;
         if signature == SAS_SUBHEADER_SIGNATURE_COLUMN_TEXT {
-            parse_column_text_subheader(subheader, metadata)?;
+            parse_column_text_subheader(subheader, metadata, layout)?;
         }
     }
 
@@ -413,18 +508,20 @@ fn parse_meta_page(page: &[u8], metadata: &mut PartialMetadata) -> Result<(), Pa
         }
 
         let subheader = subheader_slice(page, *pointer)?;
-        let signature = read_u32(subheader, 0)?;
+        let signature = read_u32(subheader, 0, layout.endianness)?;
         match signature {
-            SAS_SUBHEADER_SIGNATURE_ROW_SIZE => parse_row_size_subheader(subheader, metadata)?,
+            SAS_SUBHEADER_SIGNATURE_ROW_SIZE => {
+                parse_row_size_subheader(subheader, metadata, layout)?
+            }
             SAS_SUBHEADER_SIGNATURE_COLUMN_SIZE => {
-                parse_column_size_subheader(subheader, metadata)?
+                parse_column_size_subheader(subheader, metadata, layout)?
             }
             SAS_SUBHEADER_SIGNATURE_COLUMN_TEXT => {}
             SAS_SUBHEADER_SIGNATURE_COLUMN_NAME => {
-                parse_column_name_subheader(subheader, metadata)?
+                parse_column_name_subheader(subheader, metadata, layout)?
             }
             SAS_SUBHEADER_SIGNATURE_COLUMN_ATTRS => {
-                parse_column_attrs_subheader(subheader, metadata)?
+                parse_column_attrs_subheader(subheader, metadata, layout)?
             }
             SAS_SUBHEADER_SIGNATURE_COLUMN_FORMAT => parse_column_format_subheader(subheader)?,
             other => {
@@ -441,18 +538,20 @@ fn parse_meta_page(page: &[u8], metadata: &mut PartialMetadata) -> Result<(), Pa
 fn parse_row_size_subheader(
     subheader: &[u8],
     metadata: &mut PartialMetadata,
+    layout: DecodeLayout,
 ) -> Result<(), ParserError> {
     ensure_len(subheader, 128, "row size subheader is truncated")?;
+    let offsets = layout.row_size_offsets();
 
-    metadata.row_length = read_u64(subheader, 40)? as usize;
-    metadata.row_count = read_u64(subheader, 48)? as usize;
+    metadata.row_length = layout.read_word(subheader, offsets.row_length)? as usize;
+    metadata.row_count = layout.read_word(subheader, offsets.row_count)? as usize;
 
-    let file_label_ref = read_text_ref(subheader, subheader.len() - 130)?;
+    let file_label_ref = read_text_ref(subheader, subheader.len() - 130, layout.endianness)?;
     if file_label_ref.length > 0 {
         metadata.file_label = resolve_text(&metadata.text_blobs, file_label_ref)?;
     }
 
-    let compression_ref = read_text_ref(subheader, subheader.len() - 118)?;
+    let compression_ref = read_text_ref(subheader, subheader.len() - 118, layout.endianness)?;
     if compression_ref.length > 0 {
         let compression = resolve_text(&metadata.text_blobs, compression_ref)?;
         metadata.compression = match compression.as_str() {
@@ -468,9 +567,10 @@ fn parse_row_size_subheader(
 fn parse_column_size_subheader(
     subheader: &[u8],
     metadata: &mut PartialMetadata,
+    layout: DecodeLayout,
 ) -> Result<(), ParserError> {
     ensure_len(subheader, 16, "column size subheader is truncated")?;
-    let column_count = read_u64(subheader, 8)? as usize;
+    let column_count = layout.read_word(subheader, layout.subheader_data_offset())? as usize;
     metadata.declared_column_count = Some(column_count);
     ensure_column_capacity(metadata, column_count);
     Ok(())
@@ -479,26 +579,29 @@ fn parse_column_size_subheader(
 fn parse_column_text_subheader(
     subheader: &[u8],
     metadata: &mut PartialMetadata,
+    layout: DecodeLayout,
 ) -> Result<(), ParserError> {
-    ensure_remainder(subheader)?;
+    ensure_remainder(subheader, layout)?;
     metadata
         .text_blobs
-        .push(subheader[SIGNATURE_SIZE_64..].to_vec());
+        .push(subheader[layout.subheader_data_offset()..].to_vec());
     Ok(())
 }
 
 fn parse_column_name_subheader(
     subheader: &[u8],
     metadata: &mut PartialMetadata,
+    layout: DecodeLayout,
 ) -> Result<(), ParserError> {
-    ensure_remainder(subheader)?;
-    let column_count = (subheader.len() - 28) / 8;
+    ensure_remainder(subheader, layout)?;
+    let column_count = (subheader.len() - (layout.subheader_data_offset() + 20)) / 8;
     let end = metadata.parsed_name_count + column_count;
     ensure_column_capacity(metadata, end);
 
-    let mut offset = SIGNATURE_SIZE_64 + 8;
+    let mut offset = layout.subheader_data_offset() + 8;
     for index in metadata.parsed_name_count..end {
-        metadata.columns[index].name_ref = Some(read_text_ref(subheader, offset)?);
+        metadata.columns[index].name_ref =
+            Some(read_text_ref(subheader, offset, layout.endianness)?);
         offset += 8;
     }
     metadata.parsed_name_count = end;
@@ -509,19 +612,25 @@ fn parse_column_name_subheader(
 fn parse_column_attrs_subheader(
     subheader: &[u8],
     metadata: &mut PartialMetadata,
+    layout: DecodeLayout,
 ) -> Result<(), ParserError> {
-    ensure_remainder(subheader)?;
-    let column_count = (subheader.len() - 28) / 16;
+    ensure_remainder(subheader, layout)?;
+    let column_count = (subheader.len() - (layout.subheader_data_offset() + 20))
+        / layout.column_attrs_entry_size();
     let end = metadata.parsed_attr_count + column_count;
     ensure_column_capacity(metadata, end);
 
-    let mut offset = SIGNATURE_SIZE_64 + 8;
+    let mut offset = layout.subheader_data_offset() + 8;
     for index in metadata.parsed_attr_count..end {
-        metadata.columns[index].offset = Some(read_u64(subheader, offset)? as usize);
-        let width = read_u32(subheader, offset + 8)? as usize;
+        metadata.columns[index].offset = Some(layout.read_word(subheader, offset)? as usize);
+        let width = read_u32(
+            subheader,
+            offset + layout.word_size_bytes(),
+            layout.endianness,
+        )? as usize;
         let kind = match byte_at(
             subheader,
-            offset + 14,
+            offset + layout.word_size_bytes() + 6,
             "column attrs subheader is truncated",
         )? {
             SAS_COLUMN_TYPE_NUM => ColumnKind::Numeric,
@@ -534,7 +643,7 @@ fn parse_column_attrs_subheader(
         };
         metadata.columns[index].width = Some(width);
         metadata.columns[index].kind = Some(kind);
-        offset += 16;
+        offset += layout.column_attrs_entry_size();
     }
     metadata.parsed_attr_count = end;
 
@@ -621,7 +730,7 @@ fn parse_row(row: &[u8], metadata: &SasMetadata) -> Result<ParsedRow, ParserErro
             .ok_or(ParserError::InvalidFormat("column value is truncated"))?;
 
         let value = match column.kind {
-            ColumnKind::Numeric => parse_numeric_value(raw_value)?,
+            ColumnKind::Numeric => parse_numeric_value(raw_value, metadata.subset.endianness)?,
             ColumnKind::String => ParsedValue::String(trim_ascii_field(raw_value)),
         };
         values.push(value);
@@ -630,7 +739,10 @@ fn parse_row(row: &[u8], metadata: &SasMetadata) -> Result<ParsedRow, ParserErro
     Ok(ParsedRow { values })
 }
 
-fn parse_numeric_value(raw_value: &[u8]) -> Result<ParsedValue, ParserError> {
+fn parse_numeric_value(
+    raw_value: &[u8],
+    endianness: Endianness,
+) -> Result<ParsedValue, ParserError> {
     match raw_value.len() {
         0 => Err(ParserError::InvalidFormat(
             "numeric value width must be greater than zero",
@@ -638,24 +750,32 @@ fn parse_numeric_value(raw_value: &[u8]) -> Result<ParsedValue, ParserError> {
         1..=7 => Ok(ParsedValue::Numeric(NumericValue::deferred_bytes(
             raw_value.to_vec(),
         ))),
-        8 => {
-            Ok(ParsedValue::Numeric(
-                f64::from_le_bytes(raw_value.try_into().map_err(|_| {
+        8 => Ok(ParsedValue::Numeric(
+            match endianness {
+                Endianness::Little => f64::from_le_bytes(raw_value.try_into().map_err(|_| {
                     ParserError::InvalidFormat("numeric value width must be 8 bytes")
-                })?)
-                .into(),
-            ))
-        }
+                })?),
+                Endianness::Big => f64::from_be_bytes(raw_value.try_into().map_err(|_| {
+                    ParserError::InvalidFormat("numeric value width must be 8 bytes")
+                })?),
+            }
+            .into(),
+        )),
         width => Err(ParserError::Unsupported(UnsupportedFeature::NumericWidth(
             width as u32,
         ))),
     }
 }
 
-fn parse_subheader_pointers(page: &[u8]) -> Result<Vec<SubheaderPointer>, ParserError> {
-    let subheader_count = read_u16(page, PAGE_HEADER_SIZE_64 - 4)? as usize;
-    let pointer_bytes_len = PAGE_HEADER_SIZE_64
-        .checked_add(subheader_count.saturating_mul(SUBHEADER_POINTER_SIZE_64))
+fn parse_subheader_pointers(
+    page: &[u8],
+    layout: DecodeLayout,
+) -> Result<Vec<SubheaderPointer>, ParserError> {
+    let subheader_count =
+        read_u16(page, layout.page_header_size() - 4, layout.endianness)? as usize;
+    let pointer_bytes_len = layout
+        .page_header_size()
+        .checked_add(subheader_count.saturating_mul(layout.subheader_pointer_size()))
         .ok_or(ParserError::InvalidFormat(
             "subheader pointer table overflowed",
         ))?;
@@ -666,11 +786,15 @@ fn parse_subheader_pointers(page: &[u8]) -> Result<Vec<SubheaderPointer>, Parser
     }
 
     let mut pointers = Vec::with_capacity(subheader_count);
-    let mut pointer_offset = PAGE_HEADER_SIZE_64;
+    let mut pointer_offset = layout.page_header_size();
     for _ in 0..subheader_count {
-        let offset = read_u64(page, pointer_offset)? as usize;
-        let len = read_u64(page, pointer_offset + 8)? as usize;
-        let compression = byte_at(page, pointer_offset + 16, "subheader pointer is truncated")?;
+        let offset = layout.read_word(page, pointer_offset)? as usize;
+        let len = layout.read_word(page, pointer_offset + layout.word_size_bytes())? as usize;
+        let compression = byte_at(
+            page,
+            pointer_offset + layout.word_size_bytes() * 2,
+            "subheader pointer is truncated",
+        )?;
 
         if offset < pointer_bytes_len
             || offset.checked_add(len).is_none()
@@ -686,7 +810,7 @@ fn parse_subheader_pointers(page: &[u8]) -> Result<Vec<SubheaderPointer>, Parser
             len,
             compression,
         });
-        pointer_offset += SUBHEADER_POINTER_SIZE_64;
+        pointer_offset += layout.subheader_pointer_size();
     }
 
     Ok(pointers)
@@ -705,9 +829,9 @@ fn ensure_column_capacity(metadata: &mut PartialMetadata, len: usize) {
     }
 }
 
-fn ensure_remainder(subheader: &[u8]) -> Result<(), ParserError> {
+fn ensure_remainder(subheader: &[u8], layout: DecodeLayout) -> Result<(), ParserError> {
     let expected_remainder = subheader.len().saturating_sub(20) as u16;
-    let remainder = read_u16(subheader, SIGNATURE_SIZE_64)?;
+    let remainder = read_u16(subheader, layout.subheader_data_offset(), layout.endianness)?;
     if remainder != expected_remainder {
         return Err(ParserError::InvalidFormat(
             "subheader remainder does not match the supported layout",
@@ -748,9 +872,10 @@ fn read_page_header(
     header_size: usize,
     page_size: usize,
     page_index: usize,
-) -> Result<[u8; PAGE_HEADER_SIZE_64], ParserError> {
+    layout: DecodeLayout,
+) -> Result<Vec<u8>, ParserError> {
     let offset = page_offset(header_size, page_size, page_index)?;
-    let mut header = [0_u8; PAGE_HEADER_SIZE_64];
+    let mut header = vec![0_u8; layout.page_header_size()];
     read_exact_at(reader, offset, &mut header)?;
     Ok(header)
 }
@@ -788,35 +913,50 @@ fn read_exact_at(
     reader.read_exact(buffer).map_err(io_error)
 }
 
-fn read_text_ref(bytes: &[u8], offset: usize) -> Result<TextRef, ParserError> {
+fn read_text_ref(
+    bytes: &[u8],
+    offset: usize,
+    endianness: Endianness,
+) -> Result<TextRef, ParserError> {
     Ok(TextRef {
-        index: read_u16(bytes, offset)?,
-        offset: read_u16(bytes, offset + 2)? as usize,
-        length: read_u16(bytes, offset + 4)? as usize,
+        index: read_u16(bytes, offset, endianness)?,
+        offset: read_u16(bytes, offset + 2, endianness)? as usize,
+        length: read_u16(bytes, offset + 4, endianness)? as usize,
     })
 }
 
-fn read_u16(bytes: &[u8], offset: usize) -> Result<u16, ParserError> {
+fn read_u16(bytes: &[u8], offset: usize, endianness: Endianness) -> Result<u16, ParserError> {
     let raw = bytes
         .get(offset..offset + 2)
         .ok_or(ParserError::InvalidFormat("expected a 16-bit value"))?;
-    Ok(u16::from_le_bytes([raw[0], raw[1]]))
+    Ok(match endianness {
+        Endianness::Little => u16::from_le_bytes([raw[0], raw[1]]),
+        Endianness::Big => u16::from_be_bytes([raw[0], raw[1]]),
+    })
 }
 
-fn read_u32(bytes: &[u8], offset: usize) -> Result<u32, ParserError> {
+fn read_u32(bytes: &[u8], offset: usize, endianness: Endianness) -> Result<u32, ParserError> {
     let raw = bytes
         .get(offset..offset + 4)
         .ok_or(ParserError::InvalidFormat("expected a 32-bit value"))?;
-    Ok(u32::from_le_bytes([raw[0], raw[1], raw[2], raw[3]]))
+    Ok(match endianness {
+        Endianness::Little => u32::from_le_bytes([raw[0], raw[1], raw[2], raw[3]]),
+        Endianness::Big => u32::from_be_bytes([raw[0], raw[1], raw[2], raw[3]]),
+    })
 }
 
-fn read_u64(bytes: &[u8], offset: usize) -> Result<u64, ParserError> {
+fn read_u64(bytes: &[u8], offset: usize, endianness: Endianness) -> Result<u64, ParserError> {
     let raw = bytes
         .get(offset..offset + 8)
         .ok_or(ParserError::InvalidFormat("expected a 64-bit value"))?;
-    Ok(u64::from_le_bytes([
-        raw[0], raw[1], raw[2], raw[3], raw[4], raw[5], raw[6], raw[7],
-    ]))
+    Ok(match endianness {
+        Endianness::Little => u64::from_le_bytes([
+            raw[0], raw[1], raw[2], raw[3], raw[4], raw[5], raw[6], raw[7],
+        ]),
+        Endianness::Big => u64::from_be_bytes([
+            raw[0], raw[1], raw[2], raw[3], raw[4], raw[5], raw[6], raw[7],
+        ]),
+    })
 }
 
 fn byte_at(bytes: &[u8], offset: usize, message: &'static str) -> Result<u8, ParserError> {

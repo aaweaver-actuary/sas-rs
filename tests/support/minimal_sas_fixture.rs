@@ -1,5 +1,6 @@
 #![allow(dead_code)]
 
+use sas_rs::parser::contracts::{Endianness, WordSize};
 use std::cmp;
 use std::fs;
 use std::io::{Cursor, Read, Seek, SeekFrom};
@@ -12,15 +13,19 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 const HEADER_SIZE: usize = 8192;
 const PAGE_SIZE: usize = 4096;
-const PAGE_HEADER_SIZE: usize = 40;
 const PAGE_COUNT_OFFSET: usize = 204;
 const HEADER_PREFIX_LEN: usize = PAGE_COUNT_OFFSET + 8;
-const SUBHEADER_POINTER_SIZE: usize = 24;
+const ROW_SIZE_SUBHEADER_LEN: usize = 808;
 
 const MAGIC_NUMBER: [u8; 32] = [
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xc2, 0xea, 0x81, 0x60,
     0xb3, 0x14, 0x11, 0xcf, 0xbd, 0x92, 0x08, 0x00, 0x09, 0xc7, 0x31, 0x8c, 0x18, 0x1f, 0x10, 0x11,
 ];
+
+const SAS_ALIGNMENT_OFFSET_4: u8 = 0x33;
+const SAS_ALIGNMENT_OFFSET_0: u8 = 0x00;
+const SAS_ENDIAN_BIG: u8 = 0x00;
+const SAS_ENDIAN_LITTLE: u8 = 0x01;
 
 const SAS_PAGE_TYPE_META: u16 = 0x0000;
 const SAS_PAGE_TYPE_DATA: u16 = 0x0100;
@@ -35,8 +40,90 @@ const SAS_SUBHEADER_SIGNATURE_COLUMN_FORMAT: u32 = 0xFFFFFBFE;
 const SAS_COLUMN_TYPE_NUM: u8 = 0x01;
 const SAS_COLUMN_TYPE_CHR: u8 = 0x02;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FixtureLayout {
+    pub word_size: WordSize,
+    pub endianness: Endianness,
+}
+
+impl FixtureLayout {
+    pub const fn bit64_little() -> Self {
+        Self {
+            word_size: WordSize::Bit64,
+            endianness: Endianness::Little,
+        }
+    }
+
+    pub const fn bit64_big() -> Self {
+        Self {
+            word_size: WordSize::Bit64,
+            endianness: Endianness::Big,
+        }
+    }
+
+    pub const fn bit32_little() -> Self {
+        Self {
+            word_size: WordSize::Bit32,
+            endianness: Endianness::Little,
+        }
+    }
+
+    fn word_size_bytes(self) -> usize {
+        match self.word_size {
+            WordSize::Bit32 => 4,
+            WordSize::Bit64 => 8,
+        }
+    }
+
+    fn page_header_size(self) -> usize {
+        match self.word_size {
+            WordSize::Bit32 => 24,
+            WordSize::Bit64 => 40,
+        }
+    }
+
+    fn subheader_pointer_size(self) -> usize {
+        match self.word_size {
+            WordSize::Bit32 => 12,
+            WordSize::Bit64 => 24,
+        }
+    }
+
+    fn subheader_data_offset(self) -> usize {
+        match self.word_size {
+            WordSize::Bit32 => 4,
+            WordSize::Bit64 => 8,
+        }
+    }
+
+    fn column_attrs_entry_size(self) -> usize {
+        self.word_size_bytes() + 8
+    }
+
+    fn row_size_offsets(self) -> (usize, usize, usize, usize) {
+        match self.word_size {
+            WordSize::Bit32 => (20, 24, 36, 52),
+            WordSize::Bit64 => (40, 48, 72, 104),
+        }
+    }
+
+    fn numeric_bytes(self, value: f64) -> [u8; 8] {
+        match self.endianness {
+            Endianness::Little => value.to_le_bytes(),
+            Endianness::Big => value.to_be_bytes(),
+        }
+    }
+}
+
+impl Default for FixtureLayout {
+    fn default() -> Self {
+        Self::bit64_little()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct FixtureDefinition {
+    pub layout: FixtureLayout,
     pub table_name: String,
     pub columns: Vec<FixtureColumn>,
     pub rows: Vec<Vec<FixtureValue>>,
@@ -109,6 +196,7 @@ impl Seek for TrackingCursor {
 
 pub fn supported_fixture_definition() -> FixtureDefinition {
     FixtureDefinition {
+        layout: FixtureLayout::default(),
         table_name: "DATASET".to_string(),
         columns: vec![
             FixtureColumn::Numeric {
@@ -142,16 +230,28 @@ pub fn supported_fixture_bytes() -> Vec<u8> {
     build_fixture(&supported_fixture_definition())
 }
 
+pub fn bit32_little_endian_fixture_bytes() -> Vec<u8> {
+    let mut definition = supported_fixture_definition();
+    definition.layout = FixtureLayout::bit32_little();
+    build_fixture(&definition)
+}
+
 pub fn big_endian_fixture_bytes() -> Vec<u8> {
-    let mut bytes = supported_fixture_bytes();
-    bytes[37] = 0x00;
-    bytes
+    let mut definition = supported_fixture_definition();
+    definition.layout = FixtureLayout::bit64_big();
+    build_fixture(&definition)
 }
 
 pub fn compressed_fixture_bytes() -> Vec<u8> {
     let mut fixture = supported_fixture_definition();
     fixture.compression_signature = Some("SASYZCRL".to_string());
     build_fixture(&fixture)
+}
+
+pub fn malformed_word_size_fixture_bytes(word_size_marker: u8) -> Vec<u8> {
+    let mut fixture = bit32_little_endian_fixture_bytes();
+    fixture[32] = word_size_marker;
+    fixture
 }
 
 pub fn write_fixture_file(definition: &FixtureDefinition, path: &Path) {
@@ -173,13 +273,13 @@ pub fn unique_tmp_path(prefix: &str, extension: &str) -> PathBuf {
 
 pub fn page_count_for(definition: &FixtureDefinition) -> usize {
     let row_length = definition.columns.iter().map(column_width).sum::<usize>();
-    let rows_per_page = (PAGE_SIZE - PAGE_HEADER_SIZE) / row_length;
+    let rows_per_page = (PAGE_SIZE - definition.layout.page_header_size()) / row_length;
     let data_page_count = definition.rows.len().div_ceil(rows_per_page);
     1 + data_page_count
 }
 
 pub fn lazy_parse_read_budget(page_count: usize) -> usize {
-    HEADER_PREFIX_LEN + page_count * PAGE_HEADER_SIZE + PAGE_SIZE
+    HEADER_PREFIX_LEN + page_count * FixtureLayout::default().page_header_size() + PAGE_SIZE
 }
 
 pub fn first_batch_read_budget(page_count: usize) -> usize {
@@ -212,7 +312,7 @@ pub fn build_fixture(definition: &FixtureDefinition) -> Vec<u8> {
     let row_length = definition.columns.iter().map(column_width).sum::<usize>();
     assert!(row_length > 0, "row_length must be greater than zero");
 
-    let rows_per_page = (PAGE_SIZE - PAGE_HEADER_SIZE) / row_length;
+    let rows_per_page = (PAGE_SIZE - definition.layout.page_header_size()) / row_length;
     assert!(rows_per_page > 0, "row_length must fit inside a page");
 
     let data_page_count = definition.rows.len().div_ceil(rows_per_page);
@@ -231,7 +331,12 @@ pub fn build_fixture(definition: &FixtureDefinition) -> Vec<u8> {
     }
 
     let mut output = vec![0_u8; HEADER_SIZE + page_count * PAGE_SIZE];
-    write_header(&mut output[..HEADER_SIZE], definition, page_count);
+    write_header(
+        &mut output[..HEADER_SIZE],
+        definition,
+        page_count,
+        definition.layout,
+    );
 
     let subheaders = build_subheaders(
         definition,
@@ -241,7 +346,11 @@ pub fn build_fixture(definition: &FixtureDefinition) -> Vec<u8> {
         row_length,
     );
     let meta_start = HEADER_SIZE;
-    write_meta_page(&mut output[meta_start..meta_start + PAGE_SIZE], &subheaders);
+    write_meta_page(
+        &mut output[meta_start..meta_start + PAGE_SIZE],
+        &subheaders,
+        definition.layout,
+    );
 
     let mut row_cursor = 0;
     for page_index in 0..data_page_count {
@@ -253,6 +362,7 @@ pub fn build_fixture(definition: &FixtureDefinition) -> Vec<u8> {
             page_slice,
             &definition.rows[row_cursor..row_cursor + page_row_count],
             &definition.columns,
+            definition.layout,
         );
         row_cursor += page_row_count;
     }
@@ -276,21 +386,23 @@ fn build_subheaders(
     row_length: usize,
 ) -> Vec<Vec<u8>> {
     let column_count = definition.columns.len();
+    let layout = definition.layout;
     let mut subheaders = vec![
         row_size_subheader(
             row_length,
             definition.rows.len(),
             column_count,
             compression_ref,
+            layout,
         ),
-        column_size_subheader(column_count),
-        column_text_subheader(text_blob),
-        column_name_subheader(column_name_refs),
-        column_attrs_subheader(&definition.columns),
+        column_size_subheader(column_count, layout),
+        column_text_subheader(text_blob, layout),
+        column_name_subheader(column_name_refs, layout),
+        column_attrs_subheader(&definition.columns, layout),
     ];
 
     for _ in &definition.columns {
-        subheaders.push(column_format_subheader());
+        subheaders.push(column_format_subheader(layout));
     }
 
     subheaders
@@ -301,137 +413,244 @@ fn row_size_subheader(
     row_count: usize,
     column_count: usize,
     compression_ref: Option<TextRef>,
+    layout: FixtureLayout,
 ) -> Vec<u8> {
-    let mut bytes = vec![0_u8; 808];
-    write_u32(&mut bytes, 0, SAS_SUBHEADER_SIGNATURE_ROW_SIZE);
-    write_u64(&mut bytes, 40, row_length as u64);
-    write_u64(&mut bytes, 48, row_count as u64);
-    write_u64(&mut bytes, 72, column_count as u64);
-    write_u64(&mut bytes, 104, PAGE_SIZE as u64);
+    let mut bytes = vec![0_u8; ROW_SIZE_SUBHEADER_LEN];
+    let (row_length_offset, row_count_offset, column_count_offset, page_size_offset) =
+        layout.row_size_offsets();
+
+    write_u32(
+        &mut bytes,
+        0,
+        SAS_SUBHEADER_SIGNATURE_ROW_SIZE,
+        layout.endianness,
+    );
+    write_word(&mut bytes, row_length_offset, row_length as u64, layout);
+    write_word(&mut bytes, row_count_offset, row_count as u64, layout);
+    write_word(&mut bytes, column_count_offset, column_count as u64, layout);
+    write_word(&mut bytes, page_size_offset, PAGE_SIZE as u64, layout);
 
     if let Some(text_ref) = compression_ref {
-        write_text_ref(&mut bytes, 808 - 118, text_ref);
+        write_text_ref(
+            &mut bytes,
+            ROW_SIZE_SUBHEADER_LEN - 118,
+            text_ref,
+            layout.endianness,
+        );
     }
 
     bytes
 }
 
-fn column_size_subheader(column_count: usize) -> Vec<u8> {
+fn column_size_subheader(column_count: usize, layout: FixtureLayout) -> Vec<u8> {
     let mut bytes = vec![0_u8; 24];
-    write_u32(&mut bytes, 0, SAS_SUBHEADER_SIGNATURE_COLUMN_SIZE);
-    write_u64(&mut bytes, 8, column_count as u64);
+    write_u32(
+        &mut bytes,
+        0,
+        SAS_SUBHEADER_SIGNATURE_COLUMN_SIZE,
+        layout.endianness,
+    );
+    write_word(
+        &mut bytes,
+        layout.subheader_data_offset(),
+        column_count as u64,
+        layout,
+    );
     bytes
 }
 
-fn column_text_subheader(text_blob: &[u8]) -> Vec<u8> {
-    let mut bytes = vec![0_u8; 8 + text_blob.len()];
-    write_u32(&mut bytes, 0, SAS_SUBHEADER_SIGNATURE_COLUMN_TEXT);
-    bytes[8..].copy_from_slice(text_blob);
+fn column_text_subheader(text_blob: &[u8], layout: FixtureLayout) -> Vec<u8> {
+    let data_offset = layout.subheader_data_offset();
+    let mut bytes = vec![0_u8; data_offset + text_blob.len()];
+    write_u32(
+        &mut bytes,
+        0,
+        SAS_SUBHEADER_SIGNATURE_COLUMN_TEXT,
+        layout.endianness,
+    );
+    bytes[data_offset..].copy_from_slice(text_blob);
     let remainder = (bytes.len() - 20) as u16;
-    write_u16(&mut bytes, 8, remainder);
+    write_u16(&mut bytes, data_offset, remainder, layout.endianness);
     bytes[20..28].fill(b' ');
     bytes
 }
 
-fn column_name_subheader(column_name_refs: &[TextRef]) -> Vec<u8> {
-    let mut bytes = vec![0_u8; 28 + 8 * column_name_refs.len()];
-    write_u32(&mut bytes, 0, SAS_SUBHEADER_SIGNATURE_COLUMN_NAME);
+fn column_name_subheader(column_name_refs: &[TextRef], layout: FixtureLayout) -> Vec<u8> {
+    let data_offset = layout.subheader_data_offset();
+    let mut bytes = vec![0_u8; data_offset + 20 + 8 * column_name_refs.len()];
+    write_u32(
+        &mut bytes,
+        0,
+        SAS_SUBHEADER_SIGNATURE_COLUMN_NAME,
+        layout.endianness,
+    );
     let remainder = (bytes.len() - 20) as u16;
-    write_u16(&mut bytes, 8, remainder);
+    write_u16(&mut bytes, data_offset, remainder, layout.endianness);
 
-    let mut offset = 16;
+    let mut offset = data_offset + 8;
     for text_ref in column_name_refs {
-        write_text_ref(&mut bytes, offset, *text_ref);
+        write_text_ref(&mut bytes, offset, *text_ref, layout.endianness);
         offset += 8;
     }
 
     bytes
 }
 
-fn column_attrs_subheader(columns: &[FixtureColumn]) -> Vec<u8> {
-    let mut bytes = vec![0_u8; 28 + 16 * columns.len()];
-    write_u32(&mut bytes, 0, SAS_SUBHEADER_SIGNATURE_COLUMN_ATTRS);
+fn column_attrs_subheader(columns: &[FixtureColumn], layout: FixtureLayout) -> Vec<u8> {
+    let data_offset = layout.subheader_data_offset();
+    let entry_size = layout.column_attrs_entry_size();
+    let mut bytes = vec![0_u8; data_offset + 20 + entry_size * columns.len()];
+    write_u32(
+        &mut bytes,
+        0,
+        SAS_SUBHEADER_SIGNATURE_COLUMN_ATTRS,
+        layout.endianness,
+    );
     let remainder = (bytes.len() - 20) as u16;
-    write_u16(&mut bytes, 8, remainder);
+    write_u16(&mut bytes, data_offset, remainder, layout.endianness);
 
     let mut row_offset = 0_usize;
-    let mut entry_offset = 16;
+    let mut entry_offset = data_offset + 8;
     for column in columns {
-        write_u64(&mut bytes, entry_offset, row_offset as u64);
-        write_u32(&mut bytes, entry_offset + 8, column_width(column) as u32);
+        write_word(&mut bytes, entry_offset, row_offset as u64, layout);
+        write_u32(
+            &mut bytes,
+            entry_offset + layout.word_size_bytes(),
+            column_width(column) as u32,
+            layout.endianness,
+        );
         write_u16(
             &mut bytes,
-            entry_offset + 12,
+            entry_offset + layout.word_size_bytes() + 4,
             if column.name().len() <= 8 { 4 } else { 2048 },
+            layout.endianness,
         );
-        bytes[entry_offset + 14] = match column {
+        bytes[entry_offset + layout.word_size_bytes() + 6] = match column {
             FixtureColumn::Numeric { .. } => SAS_COLUMN_TYPE_NUM,
             FixtureColumn::String { .. } => SAS_COLUMN_TYPE_CHR,
         };
 
         row_offset += column_width(column);
-        entry_offset += 16;
+        entry_offset += entry_size;
     }
 
     bytes
 }
 
-fn column_format_subheader() -> Vec<u8> {
+fn column_format_subheader(layout: FixtureLayout) -> Vec<u8> {
     let mut bytes = vec![0_u8; 64];
-    write_u32(&mut bytes, 0, SAS_SUBHEADER_SIGNATURE_COLUMN_FORMAT);
+    write_u32(
+        &mut bytes,
+        0,
+        SAS_SUBHEADER_SIGNATURE_COLUMN_FORMAT,
+        layout.endianness,
+    );
     bytes
 }
 
-fn write_header(bytes: &mut [u8], definition: &FixtureDefinition, page_count: usize) {
+fn write_header(
+    bytes: &mut [u8],
+    definition: &FixtureDefinition,
+    page_count: usize,
+    layout: FixtureLayout,
+) {
     bytes[..32].copy_from_slice(&MAGIC_NUMBER);
-    bytes[32] = 0x33;
+    bytes[32] = match layout.word_size {
+        WordSize::Bit32 => SAS_ALIGNMENT_OFFSET_0,
+        WordSize::Bit64 => SAS_ALIGNMENT_OFFSET_4,
+    };
     bytes[35] = 0x22;
-    bytes[37] = 0x01;
+    bytes[37] = match layout.endianness {
+        Endianness::Little => SAS_ENDIAN_LITTLE,
+        Endianness::Big => SAS_ENDIAN_BIG,
+    };
     bytes[39] = b'1';
     bytes[70] = 20;
     bytes[84..92].copy_from_slice(b"SAS FILE");
     write_padded_ascii(bytes, 92, 32, &definition.table_name);
     bytes[156..164].copy_from_slice(b"DATA    ");
-    write_u32(bytes, 196, HEADER_SIZE as u32);
-    write_u32(bytes, 200, PAGE_SIZE as u32);
-    write_u64(bytes, 204, page_count as u64);
+    write_u32(bytes, 196, HEADER_SIZE as u32, layout.endianness);
+    write_u32(bytes, 200, PAGE_SIZE as u32, layout.endianness);
+    write_word(bytes, 204, page_count as u64, layout);
     bytes[220..228].copy_from_slice(b"9.0101M0");
     bytes[228..244].copy_from_slice(b"9.0401M6Linux\0\0\0");
 }
 
-fn write_meta_page(bytes: &mut [u8], subheaders: &[Vec<u8>]) {
+fn write_meta_page(bytes: &mut [u8], subheaders: &[Vec<u8>], layout: FixtureLayout) {
     bytes.fill(0);
-    write_u16(bytes, PAGE_HEADER_SIZE - 8, SAS_PAGE_TYPE_META);
-    write_u16(bytes, PAGE_HEADER_SIZE - 6, 0);
-    write_u16(bytes, PAGE_HEADER_SIZE - 4, subheaders.len() as u16);
-    write_u16(bytes, PAGE_HEADER_SIZE - 2, subheaders.len() as u16);
+    let page_header_size = layout.page_header_size();
+    write_u16(
+        bytes,
+        page_header_size - 8,
+        SAS_PAGE_TYPE_META,
+        layout.endianness,
+    );
+    write_u16(bytes, page_header_size - 6, 0, layout.endianness);
+    write_u16(
+        bytes,
+        page_header_size - 4,
+        subheaders.len() as u16,
+        layout.endianness,
+    );
+    write_u16(
+        bytes,
+        page_header_size - 2,
+        subheaders.len() as u16,
+        layout.endianness,
+    );
 
-    let mut pointer_offset = PAGE_HEADER_SIZE;
+    let mut pointer_offset = page_header_size;
     let mut data_offset = PAGE_SIZE;
     for subheader in subheaders {
         data_offset -= subheader.len();
-        write_u64(bytes, pointer_offset, data_offset as u64);
-        write_u64(bytes, pointer_offset + 8, subheader.len() as u64);
+        write_word(bytes, pointer_offset, data_offset as u64, layout);
+        write_word(
+            bytes,
+            pointer_offset + layout.word_size_bytes(),
+            subheader.len() as u64,
+            layout,
+        );
         bytes[data_offset..data_offset + subheader.len()].copy_from_slice(subheader);
-        pointer_offset += SUBHEADER_POINTER_SIZE;
+        pointer_offset += layout.subheader_pointer_size();
     }
 }
 
-fn write_data_page(bytes: &mut [u8], rows: &[Vec<FixtureValue>], columns: &[FixtureColumn]) {
+fn write_data_page(
+    bytes: &mut [u8],
+    rows: &[Vec<FixtureValue>],
+    columns: &[FixtureColumn],
+    layout: FixtureLayout,
+) {
     bytes.fill(0);
-    write_u16(bytes, PAGE_HEADER_SIZE - 8, SAS_PAGE_TYPE_DATA);
-    write_u16(bytes, PAGE_HEADER_SIZE - 6, rows.len() as u16);
+    let page_header_size = layout.page_header_size();
+    write_u16(
+        bytes,
+        page_header_size - 8,
+        SAS_PAGE_TYPE_DATA,
+        layout.endianness,
+    );
+    write_u16(
+        bytes,
+        page_header_size - 6,
+        rows.len() as u16,
+        layout.endianness,
+    );
 
     let row_length = columns.iter().map(column_width).sum::<usize>();
-    let mut row_offset = PAGE_HEADER_SIZE;
+    let mut row_offset = page_header_size;
     for row in rows {
         let row_slice = &mut bytes[row_offset..row_offset + row_length];
-        write_row(row_slice, row, columns);
+        write_row(row_slice, row, columns, layout);
         row_offset += row_length;
     }
 }
 
-fn write_row(bytes: &mut [u8], row: &[FixtureValue], columns: &[FixtureColumn]) {
+fn write_row(
+    bytes: &mut [u8],
+    row: &[FixtureValue],
+    columns: &[FixtureColumn],
+    layout: FixtureLayout,
+) {
     let mut offset = 0;
     for (value, column) in row.iter().zip(columns.iter()) {
         match (value, column) {
@@ -440,7 +659,7 @@ fn write_row(bytes: &mut [u8], row: &[FixtureValue], columns: &[FixtureColumn]) 
                     *width, 8,
                     "FixtureValue::Numeric only supports 8-byte numeric columns"
                 );
-                bytes[offset..offset + 8].copy_from_slice(&number.to_le_bytes());
+                bytes[offset..offset + 8].copy_from_slice(&layout.numeric_bytes(*number));
                 offset += 8;
             }
             (FixtureValue::NumericBytes(raw_bytes), FixtureColumn::Numeric { width, .. }) => {
@@ -500,20 +719,39 @@ fn write_padded_ascii(bytes: &mut [u8], offset: usize, len: usize, value: &str) 
     target[..copy_len].copy_from_slice(&value_bytes[..copy_len]);
 }
 
-fn write_text_ref(bytes: &mut [u8], offset: usize, text_ref: TextRef) {
-    write_u16(bytes, offset, text_ref.index);
-    write_u16(bytes, offset + 2, text_ref.offset);
-    write_u16(bytes, offset + 4, text_ref.length);
+fn write_text_ref(bytes: &mut [u8], offset: usize, text_ref: TextRef, endianness: Endianness) {
+    write_u16(bytes, offset, text_ref.index, endianness);
+    write_u16(bytes, offset + 2, text_ref.offset, endianness);
+    write_u16(bytes, offset + 4, text_ref.length, endianness);
 }
 
-fn write_u16(bytes: &mut [u8], offset: usize, value: u16) {
-    bytes[offset..offset + 2].copy_from_slice(&value.to_le_bytes());
+fn write_word(bytes: &mut [u8], offset: usize, value: u64, layout: FixtureLayout) {
+    match layout.word_size {
+        WordSize::Bit32 => write_u32(bytes, offset, value as u32, layout.endianness),
+        WordSize::Bit64 => write_u64(bytes, offset, value, layout.endianness),
+    }
 }
 
-fn write_u32(bytes: &mut [u8], offset: usize, value: u32) {
-    bytes[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
+fn write_u16(bytes: &mut [u8], offset: usize, value: u16, endianness: Endianness) {
+    let encoded = match endianness {
+        Endianness::Little => value.to_le_bytes(),
+        Endianness::Big => value.to_be_bytes(),
+    };
+    bytes[offset..offset + 2].copy_from_slice(&encoded);
 }
 
-fn write_u64(bytes: &mut [u8], offset: usize, value: u64) {
-    bytes[offset..offset + 8].copy_from_slice(&value.to_le_bytes());
+fn write_u32(bytes: &mut [u8], offset: usize, value: u32, endianness: Endianness) {
+    let encoded = match endianness {
+        Endianness::Little => value.to_le_bytes(),
+        Endianness::Big => value.to_be_bytes(),
+    };
+    bytes[offset..offset + 4].copy_from_slice(&encoded);
+}
+
+fn write_u64(bytes: &mut [u8], offset: usize, value: u64, endianness: Endianness) {
+    let encoded = match endianness {
+        Endianness::Little => value.to_le_bytes(),
+        Endianness::Big => value.to_be_bytes(),
+    };
+    bytes[offset..offset + 8].copy_from_slice(&encoded);
 }

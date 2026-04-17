@@ -37,8 +37,83 @@ pub struct SupportedSubset {
     pub compression: CompressionMode,
 }
 
+pub const SUPPORTED_SUBSET_NAME: &str = "sas7bdat-64le-uncompressed-v1";
+const SUPPORTED_SUBSET_NAME_32LE: &str = "sas7bdat-32le-uncompressed-v1";
+const SUPPORTED_SUBSET_NAME_32BE: &str = "sas7bdat-32be-uncompressed-v1";
+const SUPPORTED_SUBSET_NAME_64BE: &str = "sas7bdat-64be-uncompressed-v1";
+const SUPPORTED_SUBSET_NAME_32LE_ROW: &str = "sas7bdat-32le-row-compressed-v1";
+const SUPPORTED_SUBSET_NAME_32BE_ROW: &str = "sas7bdat-32be-row-compressed-v1";
+const SUPPORTED_SUBSET_NAME_64LE_ROW: &str = "sas7bdat-64le-row-compressed-v1";
+const SUPPORTED_SUBSET_NAME_64BE_ROW: &str = "sas7bdat-64be-row-compressed-v1";
+const SUPPORTED_SUBSET_NAME_32LE_BINARY: &str = "sas7bdat-32le-binary-compressed-v1";
+const SUPPORTED_SUBSET_NAME_32BE_BINARY: &str = "sas7bdat-32be-binary-compressed-v1";
+const SUPPORTED_SUBSET_NAME_64LE_BINARY: &str = "sas7bdat-64le-binary-compressed-v1";
+const SUPPORTED_SUBSET_NAME_64BE_BINARY: &str = "sas7bdat-64be-binary-compressed-v1";
+const SUPPORTED_SUBSET_NAME_32LE_UNKNOWN: &str = "sas7bdat-32le-unknown-compression-v1";
+const SUPPORTED_SUBSET_NAME_32BE_UNKNOWN: &str = "sas7bdat-32be-unknown-compression-v1";
+const SUPPORTED_SUBSET_NAME_64LE_UNKNOWN: &str = "sas7bdat-64le-unknown-compression-v1";
+const SUPPORTED_SUBSET_NAME_64BE_UNKNOWN: &str = "sas7bdat-64be-unknown-compression-v1";
+
+fn supported_subset_name(
+    word_size: WordSize,
+    endianness: Endianness,
+    compression: CompressionMode,
+) -> &'static str {
+    match (word_size, endianness, compression) {
+        (WordSize::Bit32, Endianness::Little, CompressionMode::None) => SUPPORTED_SUBSET_NAME_32LE,
+        (WordSize::Bit32, Endianness::Big, CompressionMode::None) => SUPPORTED_SUBSET_NAME_32BE,
+        (WordSize::Bit64, Endianness::Little, CompressionMode::None) => SUPPORTED_SUBSET_NAME,
+        (WordSize::Bit64, Endianness::Big, CompressionMode::None) => SUPPORTED_SUBSET_NAME_64BE,
+        (WordSize::Bit32, Endianness::Little, CompressionMode::Row) => {
+            SUPPORTED_SUBSET_NAME_32LE_ROW
+        }
+        (WordSize::Bit32, Endianness::Big, CompressionMode::Row) => SUPPORTED_SUBSET_NAME_32BE_ROW,
+        (WordSize::Bit64, Endianness::Little, CompressionMode::Row) => {
+            SUPPORTED_SUBSET_NAME_64LE_ROW
+        }
+        (WordSize::Bit64, Endianness::Big, CompressionMode::Row) => SUPPORTED_SUBSET_NAME_64BE_ROW,
+        (WordSize::Bit32, Endianness::Little, CompressionMode::Binary) => {
+            SUPPORTED_SUBSET_NAME_32LE_BINARY
+        }
+        (WordSize::Bit32, Endianness::Big, CompressionMode::Binary) => {
+            SUPPORTED_SUBSET_NAME_32BE_BINARY
+        }
+        (WordSize::Bit64, Endianness::Little, CompressionMode::Binary) => {
+            SUPPORTED_SUBSET_NAME_64LE_BINARY
+        }
+        (WordSize::Bit64, Endianness::Big, CompressionMode::Binary) => {
+            SUPPORTED_SUBSET_NAME_64BE_BINARY
+        }
+        (WordSize::Bit32, Endianness::Little, CompressionMode::Unknown(_)) => {
+            SUPPORTED_SUBSET_NAME_32LE_UNKNOWN
+        }
+        (WordSize::Bit32, Endianness::Big, CompressionMode::Unknown(_)) => {
+            SUPPORTED_SUBSET_NAME_32BE_UNKNOWN
+        }
+        (WordSize::Bit64, Endianness::Little, CompressionMode::Unknown(_)) => {
+            SUPPORTED_SUBSET_NAME_64LE_UNKNOWN
+        }
+        (WordSize::Bit64, Endianness::Big, CompressionMode::Unknown(_)) => {
+            SUPPORTED_SUBSET_NAME_64BE_UNKNOWN
+        }
+    }
+}
+
+pub fn supported_subset(
+    word_size: WordSize,
+    endianness: Endianness,
+    compression: CompressionMode,
+) -> SupportedSubset {
+    SupportedSubset {
+        name: supported_subset_name(word_size, endianness, compression),
+        word_size,
+        endianness,
+        compression,
+    }
+}
+
 pub const SUPPORTED_SUBSET: SupportedSubset = SupportedSubset {
-    name: "sas7bdat-64le-uncompressed-v1",
+    name: SUPPORTED_SUBSET_NAME,
     word_size: WordSize::Bit64,
     endianness: Endianness::Little,
     compression: CompressionMode::None,
