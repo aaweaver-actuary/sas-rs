@@ -11,3 +11,4 @@ This folder stores atomic quick-reference memories for future agents.
 
 ## Entries
 - [00template.md](00template.md): template for atomic memory files and freshness signals.
+- [How do we run the foundation assumption probe benchmark.md](How do we run the foundation assumption probe benchmark.md): command, target, and current baseline for the foundation Criterion probe.

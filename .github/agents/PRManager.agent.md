@@ -1,5 +1,3 @@
-
-
 ---
 description: 'Use when you need a PR-scope orchestrator that owns completion-ledger state for one active PR scope and drives it through one or more bounded slices.'
 name: 'PR Manager'

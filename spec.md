@@ -24,6 +24,21 @@ This will be accomplished by:
 9. Able to handle larger-than-memory datasets
 10. CLI includes options to select or filter columns, as well as any tuning parameters we need
 11. Uses crates from polars or similar to automatically type the data appropriately before saving to parquet
+12. Coverage for both 32-bit and 64-bit layouts
+13. Coverage for both little-endian and big-endian variants
+14. Coverage for non-UTF-8 encoding codes, in particular latin-1, which is common in SAS exports
+15. Coverage for row compression
+16. Coverage for binary compression
+17. Coverage for all page types, including `META`, `DATA`, and any others we encounter in the wild
+18. Coverage for all relevant subheader signatures, including those for row size
+19. Coverage for all numeric widths, not just 8-byte values
+20. Coverage for SAS dates, times, datetimes, and duration-like values
+21. Translation of SAS labels, formats, and informats into appropriate Arrow and Parquet metadata
+22. Honest treatment of SAS special missing values instead of flattening everything into plain `f64`
+23. Fuzzing and malformed-input coverage
+24. Regression tests for edge cases such as wide rows, unusual strings, and many-page datasets
+25. Proof that lazy read and bounded-memory behavior still hold once broader format support is added
+26. Proof that streaming behavior remains correct even when metadata, compression, and value decoding become more complex
 
 ## Starting point
 
