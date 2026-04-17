@@ -151,6 +151,77 @@ fn parser_decodes_metadata_and_batches_from_the_supported_subset_fixture() {
 }
 
 #[test]
+fn parser_decodes_uncompressed_32_bit_little_endian_fixture_end_to_end() {
+    let parser = SupportedSas7bdatParser;
+
+    let mut parsed = parser
+        .parse(ParserInput::from_bytes(
+            "32le.sas7bdat",
+            minimal_sas_fixture::bit32_little_endian_fixture_bytes(),
+        ))
+        .expect("32-bit little-endian fixture should parse");
+
+    assert_eq!(
+        parsed.metadata.subset.name,
+        "sas7bdat-32le-uncompressed-v1"
+    );
+    assert_eq!(
+        parsed.metadata.subset.word_size,
+        sas_rs::parser::contracts::WordSize::Bit32
+    );
+    assert_eq!(
+        parsed
+            .next_batch(3)
+            .expect("batch decoding should succeed")
+            .expect("expected one batch")
+            .rows
+            .len(),
+        3
+    );
+}
+
+#[test]
+fn parser_decodes_uncompressed_big_endian_fixture_end_to_end() {
+    let parser = SupportedSas7bdatParser;
+
+    let mut parsed = parser
+        .parse(ParserInput::from_bytes(
+            "big-endian.sas7bdat",
+            minimal_sas_fixture::big_endian_fixture_bytes(),
+        ))
+        .expect("big-endian fixture should parse");
+
+    assert_eq!(parsed.metadata.subset.name, "sas7bdat-64be-uncompressed-v1");
+    assert_eq!(
+        parsed
+            .next_batch(3)
+            .expect("batch decoding should succeed")
+            .expect("expected one batch")
+            .rows,
+        vec![
+            sas_rs::parser::contracts::ParsedRow {
+                values: vec![
+                    ParsedValue::Numeric(1.0.into()),
+                    ParsedValue::String("ABCD".to_string()),
+                ],
+            },
+            sas_rs::parser::contracts::ParsedRow {
+                values: vec![
+                    ParsedValue::Numeric(2.5.into()),
+                    ParsedValue::String("EFGH".to_string()),
+                ],
+            },
+            sas_rs::parser::contracts::ParsedRow {
+                values: vec![
+                    ParsedValue::Numeric(3.0.into()),
+                    ParsedValue::String("IJKL".to_string()),
+                ],
+            },
+        ]
+    );
+}
+
+#[test]
 fn parser_decodes_supported_subset_across_multiple_data_pages() {
     let mut definition = minimal_sas_fixture::supported_fixture_definition();
     definition.rows = (0..700)
@@ -283,12 +354,9 @@ fn parser_reads_the_real_fts0003_file_through_the_existing_entrypoint() {
         ),
         RealFileProbeOutcome::Unsupported { stage, detail } => {
             assert_eq!(
-                stage, "parse",
-                "current baseline should fail at parse rather than during streamed decode"
-            );
-            assert_eq!(
-                detail, "Unsupported(WordSize(Bit32))",
-                "the real-file probe should capture the current unsupported readability boundary explicitly"
+                (stage, detail.as_str()),
+                ("parse", "InvalidFormat(\"invalid sas7bdat word-size flag\")"),
+                "the real-file probe should surface malformed word-size headers before later compatibility checks"
             );
         }
     }
