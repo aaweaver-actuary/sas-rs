@@ -18,7 +18,7 @@ That is the benchmark used to support the current supported-subset throughput ca
 
 `parser_decode` now drains `next_batch()` until the stream is exhausted, so it is an honest streamed decode benchmark for the current synthetic supported subset.
 
-It still does not prove broader format compatibility or real-world filesystem behavior on its own.
+Its real-file `fts0003` probe now drains the full streamed decode path through the current row-compression and `MIX`-page support boundary.
 
 ## Running The Benchmarks
 

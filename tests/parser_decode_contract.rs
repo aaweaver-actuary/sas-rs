@@ -2,7 +2,8 @@
 mod minimal_sas_fixture;
 
 use sas_rs::parser::contracts::{
-    ColumnKind, ColumnMetadata, NumericValue, ParsedValue, ParserInput, SemanticTypeHint,
+    ColumnKind, ColumnMetadata, NumericValue, ParsedValue, ParserInput, SasMissingTag,
+    SemanticTypeHint,
 };
 use sas_rs::parser::{Sas7bdatParser, SupportedSas7bdatParser};
 use std::fs::File;
@@ -20,16 +21,16 @@ enum RealFileProbeOutcome {
     },
 }
 
-fn fts0003_path() -> PathBuf {
+fn sample_dataset_path(file_name: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("sample-sas-datasets")
-        .join("fts0003.sas7bdat")
+        .join(file_name)
 }
 
-fn probe_fts0003_via_parser_entrypoint() -> RealFileProbeOutcome {
-    let path = fts0003_path();
+fn probe_sample_via_parser_entrypoint(file_name: &str) -> RealFileProbeOutcome {
+    let path = sample_dataset_path(file_name);
     let path_display = path.display().to_string();
-    let file = File::open(&path).expect("fts0003 fixture should be readable from disk");
+    let file = File::open(&path).expect("sample dataset fixture should be readable from disk");
     let parser = SupportedSas7bdatParser;
 
     let mut parsed = match parser.parse(ParserInput::from_reader(&path_display, file)) {
@@ -61,6 +62,31 @@ fn probe_fts0003_via_parser_entrypoint() -> RealFileProbeOutcome {
                 };
             }
         }
+    }
+}
+
+fn probe_fts0003_via_parser_entrypoint() -> RealFileProbeOutcome {
+    probe_sample_via_parser_entrypoint("fts0003.sas7bdat")
+}
+
+fn drain_all_rows(
+    parsed: &mut sas_rs::parser::ParsedSas7bdat,
+    batch_size_rows: usize,
+) -> Vec<sas_rs::parser::contracts::ParsedRow> {
+    let mut rows = Vec::new();
+    while let Some(batch) = parsed
+        .next_batch(batch_size_rows)
+        .expect("batch decoding should succeed")
+    {
+        rows.extend(batch.rows);
+    }
+    rows
+}
+
+fn numeric_missing_tag(value: &ParsedValue) -> Option<SasMissingTag> {
+    match value {
+        ParsedValue::Numeric(numeric) => numeric.missing_tag(),
+        ParsedValue::String(_) => None,
     }
 }
 
@@ -161,10 +187,7 @@ fn parser_decodes_uncompressed_32_bit_little_endian_fixture_end_to_end() {
         ))
         .expect("32-bit little-endian fixture should parse");
 
-    assert_eq!(
-        parsed.metadata.subset.name,
-        "sas7bdat-32le-uncompressed-v1"
-    );
+    assert_eq!(parsed.metadata.subset.name, "sas7bdat-32le-uncompressed-v1");
     assert_eq!(
         parsed.metadata.subset.word_size,
         sas_rs::parser::contracts::WordSize::Bit32
@@ -177,6 +200,31 @@ fn parser_decodes_uncompressed_32_bit_little_endian_fixture_end_to_end() {
             .rows
             .len(),
         3
+    );
+}
+
+#[test]
+fn parser_decodes_latin1_strings_without_claiming_utf8_only_support() {
+    let parser = SupportedSas7bdatParser;
+
+    let mut parsed = parser
+        .parse(ParserInput::from_bytes(
+            "latin1.sas7bdat",
+            minimal_sas_fixture::latin1_fixture_bytes(),
+        ))
+        .expect("latin-1 fixture should parse");
+
+    let batch = parsed
+        .next_batch(1)
+        .expect("batch decoding should succeed")
+        .expect("expected one row");
+
+    assert_eq!(
+        batch.rows[0].values,
+        vec![
+            ParsedValue::Numeric(1.0.into()),
+            ParsedValue::String("Caf\u{00E9}".to_string()),
+        ]
     );
 }
 
@@ -297,6 +345,90 @@ fn parser_defers_multi_page_row_reads_until_batches_are_requested() {
 }
 
 #[test]
+fn parser_decodes_row_compressed_rows_stored_across_meta_and_mix_pages() {
+    let parser = SupportedSas7bdatParser;
+    let mut parsed = parser
+        .parse(ParserInput::from_bytes(
+            "row-compressed.sas7bdat",
+            minimal_sas_fixture::row_compressed_mixed_page_fixture_bytes(),
+        ))
+        .expect("row-compressed fixture should parse");
+
+    assert_eq!(
+        parsed.metadata.subset.compression,
+        sas_rs::parser::CompressionMode::Row
+    );
+    assert_eq!(
+        drain_all_rows(&mut parsed, 8),
+        vec![
+            sas_rs::parser::contracts::ParsedRow {
+                values: vec![
+                    ParsedValue::Numeric(1.0.into()),
+                    ParsedValue::String("ABCD".to_string()),
+                ],
+            },
+            sas_rs::parser::contracts::ParsedRow {
+                values: vec![
+                    ParsedValue::Numeric(2.5.into()),
+                    ParsedValue::String("EFGH".to_string()),
+                ],
+            },
+            sas_rs::parser::contracts::ParsedRow {
+                values: vec![
+                    ParsedValue::Numeric(3.0.into()),
+                    ParsedValue::String("IJKL".to_string()),
+                ],
+            },
+            sas_rs::parser::contracts::ParsedRow {
+                values: vec![
+                    ParsedValue::Numeric(4.25.into()),
+                    ParsedValue::String("MNOP".to_string()),
+                ],
+            },
+        ]
+    );
+}
+
+#[test]
+fn parser_decodes_binary_compressed_rows_from_meta_subheaders() {
+    let parser = SupportedSas7bdatParser;
+    let mut parsed = parser
+        .parse(ParserInput::from_bytes(
+            "binary-compressed.sas7bdat",
+            minimal_sas_fixture::binary_compressed_fixture_bytes(),
+        ))
+        .expect("binary-compressed fixture should parse");
+
+    assert_eq!(
+        parsed.metadata.subset.compression,
+        sas_rs::parser::CompressionMode::Binary
+    );
+    assert_eq!(
+        drain_all_rows(&mut parsed, 8),
+        vec![
+            sas_rs::parser::contracts::ParsedRow {
+                values: vec![
+                    ParsedValue::Numeric(1.0.into()),
+                    ParsedValue::String("ABCD".to_string()),
+                ],
+            },
+            sas_rs::parser::contracts::ParsedRow {
+                values: vec![
+                    ParsedValue::Numeric(2.5.into()),
+                    ParsedValue::String("EFGH".to_string()),
+                ],
+            },
+            sas_rs::parser::contracts::ParsedRow {
+                values: vec![
+                    ParsedValue::Numeric(3.0.into()),
+                    ParsedValue::String("IJKL".to_string()),
+                ],
+            },
+        ]
+    );
+}
+
+#[test]
 fn parser_preserves_non_8_byte_numeric_cells_without_parser_core_rejection() {
     let mut definition = minimal_sas_fixture::supported_fixture_definition();
     definition.columns = vec![
@@ -343,21 +475,207 @@ fn parser_preserves_non_8_byte_numeric_cells_without_parser_core_rejection() {
 }
 
 #[test]
-fn parser_reads_the_real_fts0003_file_through_the_existing_entrypoint() {
+fn parser_reads_the_real_10rec_file_through_the_existing_entrypoint() {
+    match probe_sample_via_parser_entrypoint("10rec.sas7bdat") {
+        RealFileProbeOutcome::Readable {
+            row_count,
+            decoded_rows,
+        } => assert_eq!(
+            decoded_rows, row_count,
+            "10rec should drain the full streamed decode path once parsed"
+        ),
+        RealFileProbeOutcome::Unsupported { stage, detail } => {
+            panic!("10rec should be readable within PR-02; failed during {stage}: {detail}");
+        }
+    }
+}
+
+#[test]
+fn parser_reads_the_real_fts0003_file_through_the_compressed_entrypoint() {
     match probe_fts0003_via_parser_entrypoint() {
         RealFileProbeOutcome::Readable {
             row_count,
             decoded_rows,
         } => assert_eq!(
             decoded_rows, row_count,
-            "if fts0003 becomes readable, the real-file probe should drain the full streamed decode path"
+            "fts0003 should now drain the full streamed decode path through compression and mix-page handling"
         ),
         RealFileProbeOutcome::Unsupported { stage, detail } => {
-            assert_eq!(
-                (stage, detail.as_str()),
-                ("parse", "InvalidFormat(\"invalid sas7bdat word-size flag\")"),
-                "the real-file probe should surface malformed word-size headers before later compatibility checks"
-            );
+            panic!("fts0003 should be readable within PR-03; failed during {stage}: {detail}");
         }
     }
+}
+
+#[test]
+fn parser_infers_semantic_types_and_column_metadata_from_fixture_formats() {
+    let mut definition = minimal_sas_fixture::supported_fixture_definition();
+    definition.columns = vec![
+        minimal_sas_fixture::FixtureColumn::Numeric {
+            name: "event_dt".to_string(),
+            width: 8,
+        },
+        minimal_sas_fixture::FixtureColumn::Numeric {
+            name: "event_date".to_string(),
+            width: 8,
+        },
+        minimal_sas_fixture::FixtureColumn::Numeric {
+            name: "event_time".to_string(),
+            width: 8,
+        },
+        minimal_sas_fixture::FixtureColumn::Numeric {
+            name: "elapsed".to_string(),
+            width: 8,
+        },
+    ];
+    definition.column_metadata = vec![
+        minimal_sas_fixture::FixtureColumnMetadata {
+            label: Some("event datetime".to_string()),
+            format_name: Some("DATETIME".to_string()),
+            informat_name: None,
+            format_width: None,
+            format_digits: None,
+        },
+        minimal_sas_fixture::FixtureColumnMetadata {
+            label: Some("event date".to_string()),
+            format_name: Some("DATE".to_string()),
+            informat_name: None,
+            format_width: None,
+            format_digits: None,
+        },
+        minimal_sas_fixture::FixtureColumnMetadata {
+            label: Some("event time".to_string()),
+            format_name: Some("TIME".to_string()),
+            informat_name: None,
+            format_width: None,
+            format_digits: None,
+        },
+        minimal_sas_fixture::FixtureColumnMetadata {
+            label: Some("elapsed duration".to_string()),
+            format_name: Some("HOUR".to_string()),
+            informat_name: None,
+            format_width: None,
+            format_digits: None,
+        },
+    ];
+    definition.rows = vec![vec![
+        minimal_sas_fixture::FixtureValue::Numeric(0.0),
+        minimal_sas_fixture::FixtureValue::Numeric(0.0),
+        minimal_sas_fixture::FixtureValue::Numeric(0.0),
+        minimal_sas_fixture::FixtureValue::Numeric(60.0),
+    ]];
+
+    let parser = SupportedSas7bdatParser;
+    let parsed = parser
+        .parse(ParserInput::from_bytes(
+            "semantic-fixture.sas7bdat",
+            minimal_sas_fixture::build_fixture(&definition),
+        ))
+        .expect("semantic fixture should parse");
+
+    assert_eq!(
+        parsed.metadata.columns[0].semantic_type,
+        SemanticTypeHint::DateTime
+    );
+    assert_eq!(
+        parsed.metadata.columns[0].metadata.label.as_deref(),
+        Some("event datetime")
+    );
+    assert_eq!(
+        parsed.metadata.columns[0].metadata.format_name.as_deref(),
+        Some("DATETIME")
+    );
+    assert_eq!(
+        parsed.metadata.columns[1].semantic_type,
+        SemanticTypeHint::Date
+    );
+    assert_eq!(
+        parsed.metadata.columns[2].semantic_type,
+        SemanticTypeHint::Time
+    );
+    assert_eq!(
+        parsed.metadata.columns[3].semantic_type,
+        SemanticTypeHint::Duration
+    );
+}
+
+#[test]
+fn parser_preserves_real_dates_fixture_semantic_metadata() {
+    let parser = SupportedSas7bdatParser;
+    let parsed = parser
+        .parse(ParserInput::from_reader(
+            "dates.sas7bdat",
+            File::open(sample_dataset_path("dates.sas7bdat")).expect("dates fixture should open"),
+        ))
+        .expect("dates fixture should parse");
+
+    let dt = &parsed.metadata.columns[0];
+    assert_eq!(dt.name, "dt");
+    assert_eq!(dt.semantic_type, SemanticTypeHint::DateTime);
+    assert_eq!(dt.metadata.format_name.as_deref(), Some("DATETIME"));
+    assert_eq!(
+        dt.metadata.label.as_deref(),
+        Some("a very long label for testing accuracy of transformations")
+    );
+
+    let dates = &parsed.metadata.columns[3];
+    assert_eq!(dates.name, "dates");
+    assert_eq!(dates.semantic_type, SemanticTypeHint::Date);
+    assert_eq!(dates.metadata.format_name.as_deref(), Some("DATE"));
+
+    let times = &parsed.metadata.columns[5];
+    assert_eq!(times.name, "times");
+    assert_eq!(times.semantic_type, SemanticTypeHint::Time);
+    assert_eq!(times.metadata.format_name.as_deref(), Some("TIME"));
+}
+
+#[test]
+fn parser_exposes_real_special_missing_tags_without_flattening_them() {
+    let parser = SupportedSas7bdatParser;
+    let mut parsed = parser
+        .parse(ParserInput::from_reader(
+            "missing_test.sas7bdat",
+            File::open(sample_dataset_path("missing_test.sas7bdat"))
+                .expect("missing_test fixture should open"),
+        ))
+        .expect("missing_test fixture should parse");
+
+    let batch = parsed
+        .next_batch(8)
+        .expect("batch decoding should succeed")
+        .expect("expected one batch");
+    let row = &batch.rows[0];
+
+    assert_eq!(
+        numeric_missing_tag(&row.values[0]),
+        Some(SasMissingTag::Letter('A'))
+    );
+    assert_eq!(
+        numeric_missing_tag(&row.values[1]),
+        Some(SasMissingTag::Letter('B'))
+    );
+    assert_eq!(
+        numeric_missing_tag(&row.values[2]),
+        Some(SasMissingTag::Letter('C'))
+    );
+    assert_eq!(
+        numeric_missing_tag(&row.values[3]),
+        Some(SasMissingTag::Letter('X'))
+    );
+    assert_eq!(
+        numeric_missing_tag(&row.values[4]),
+        Some(SasMissingTag::Letter('Y'))
+    );
+    assert_eq!(
+        numeric_missing_tag(&row.values[5]),
+        Some(SasMissingTag::Letter('Z'))
+    );
+    assert_eq!(
+        numeric_missing_tag(&row.values[6]),
+        Some(SasMissingTag::Underscore)
+    );
+    assert_eq!(
+        numeric_missing_tag(&row.values[7]),
+        Some(SasMissingTag::Dot)
+    );
+    assert_eq!(numeric_missing_tag(&row.values[8]), None);
 }

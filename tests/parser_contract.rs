@@ -41,6 +41,23 @@ fn parser_exposes_32_bit_little_endian_layout_metadata() {
 }
 
 #[test]
+fn parser_exposes_32_bit_layout_metadata_when_header_offsets_are_padded() {
+    let parser = SupportedSas7bdatParser;
+
+    let parsed = parser
+        .parse(ParserInput::from_bytes(
+            "32le-padded.sas7bdat",
+            minimal_sas_fixture::bit32_little_endian_padded_header_fixture_bytes(),
+        ))
+        .expect("32-bit files with padded header offsets should parse");
+
+    assert_eq!(parsed.metadata.subset.name, "sas7bdat-32le-uncompressed-v1");
+    assert_eq!(parsed.metadata.subset.word_size, WordSize::Bit32);
+    assert_eq!(parsed.metadata.subset.endianness, Endianness::Little);
+    assert_eq!(parsed.metadata.subset.compression, CompressionMode::None);
+}
+
+#[test]
 fn parser_exposes_big_endian_layout_metadata() {
     let parser = SupportedSas7bdatParser;
 
@@ -68,22 +85,25 @@ fn parser_rejects_malformed_word_size_headers() {
         ))
         .expect_err("malformed word-size headers should be rejected");
 
-    assert_eq!(error, ParserError::InvalidFormat("invalid sas7bdat word-size flag"));
+    assert_eq!(
+        error,
+        ParserError::InvalidFormat("invalid sas7bdat word-size flag")
+    );
 }
 
 #[test]
-fn unsupported_compression_returns_a_structured_error() {
+fn unsupported_page_types_return_a_structured_error() {
     let parser = SupportedSas7bdatParser;
 
     let error = parser
         .parse(ParserInput::from_bytes(
-            "compressed.sas7bdat",
-            minimal_sas_fixture::compressed_fixture_bytes(),
+            "unsupported-page.sas7bdat",
+            minimal_sas_fixture::unsupported_page_type_fixture_bytes(0x0800),
         ))
-        .expect_err("row-compressed files should be rejected");
+        .expect_err("unsupported page types should stay explicit");
 
     assert_eq!(
         error,
-        ParserError::Unsupported(UnsupportedFeature::Compression(CompressionMode::Row))
+        ParserError::Unsupported(UnsupportedFeature::PageType(0x0800))
     );
 }

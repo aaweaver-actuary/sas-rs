@@ -13,25 +13,25 @@ The parser is responsible for:
 
 ## Supported Parser Subset
 
-The parser exposes the named subset `sas7bdat-64le-uncompressed-v1`.
+The parser currently supports the current physical subset across these physical variants:
 
-That means:
-
-- word size: 64-bit only
-- endianness: little-endian only
-- encoding: UTF-8 only
-- compression: none only
-- page types: `META` and `DATA` only
+- word size: 32-bit and 64-bit
+- endianness: little-endian and big-endian
+- encoding: UTF-8, latin-1, and Windows-1252
+- compression: none, row, and binary when rows are carried in the currently handled subheader path
+- page types: `META`, `DATA`, and `MIX` in the combinations required by the current real-file boundary
 - currently recognized subheaders:
   - row size
   - column size
+  - counts
   - column text
+  - column list
   - column name
   - column attributes
   - column format header shape only
 - column kinds:
   - physical numeric columns with widths from 1 through 8 bytes
-  - fixed-width string values
+  - fixed-width string values decoded through the declared source encoding
 
 8-byte numeric values currently materialize as `f64`. Narrower numeric widths are preserved as deferred raw bytes until a later semantic-typing scope decides how they should be interpreted.
 
@@ -53,15 +53,17 @@ That is the basis for the project’s current lazy-read and larger-than-memory c
 
 The parser currently rejects or does not implement:
 
-- 32-bit layout
-- big-endian layout
-- non-UTF-8 encoding codes
-- row compression, binary compression, or unknown compression modes
-- page types outside the handled subset
+- compressed page layouts or page types outside the handled `META` / `DATA` / `MIX` subset
+- unknown compression modes
 - subheader signatures outside the handled subset
 - numeric widths greater than 8 bytes
 - semantic materialization of non-8-byte numeric widths
 - column type codes outside numeric and string
+
+Real-sample evidence for the current boundary:
+
+- `sample-sas-datasets/10rec.sas7bdat` reads through the current parser contract and exercises 64-bit big-endian plus latin-1 decoding.
+- `sample-sas-datasets/fts0003.sas7bdat` now reads through the current parser contract, including row-compressed subheaders and the trailing `MIX` page used by that file.
 
 It also does not yet expose richer SAS semantics such as:
 
@@ -78,10 +80,8 @@ It also does not yet expose richer SAS semantics such as:
 
 To make this parser truly universal, this module would need:
 
-- 32-bit and big-endian support
-- more page-type handling
+- broader page-type handling beyond the current `META` / `DATA` / `MIX` path
 - more subheader coverage
-- non-UTF-8 decoding
-- compression support
+- broader compression coverage beyond the current row/binary subset
 - broader value and metadata interpretation
 - a larger real-world fixture corpus than the synthetic subset fixtures used today

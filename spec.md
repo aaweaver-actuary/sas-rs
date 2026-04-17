@@ -61,3 +61,9 @@ sasrs transform my-sas-file.sas7bdat my-parquet-file.parquet
 ```
 
 Within a minute or so, the file has been transformed and given appropriate data types to the columns.
+
+## Codebase design and norms
+
+- The codebase is organized into modules that separate concerns clearly, such as `constants`, `contracts`, and `offsets`.
+- The original design borrowed heavily from the `readstat` C implementation, but as we iterate and add features, we will not be afraid to diverge from that design when it makes sense for performance or readability reasons.
+- We should begin the process of slowly and carefully refactoring the codebase to be more idiomatic rust, while keeping in mind that performance is the ultimate goal, and that we should not sacrifice performance for the sake of idiomatic code, but rather strive to find a balance between the two.

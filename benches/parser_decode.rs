@@ -74,16 +74,7 @@ fn parser_decode_benchmark(criterion: &mut Criterion) {
                 black_box(decoded_rows)
             }
             RealFileProbeOutcome::Unsupported { stage, detail } => {
-                assert_eq!(
-                    stage, "parse",
-                    "current baseline should report the unsupported boundary at parse time"
-                );
-                assert_eq!(
-                    detail,
-                    "Unsupported(WordSize(Bit32))",
-                    "current real-file baseline should stay distinct from synthetic supported-subset throughput"
-                );
-                black_box(detail.len())
+                panic!("fts0003 should be readable within PR-03; failed during {stage}: {detail}");
             }
         });
     });

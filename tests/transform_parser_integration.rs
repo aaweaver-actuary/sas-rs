@@ -1,11 +1,16 @@
 #[path = "support/minimal_sas_fixture.rs"]
 mod minimal_sas_fixture;
 
+use std::collections::HashMap;
 use std::fs::File;
 use std::io::Cursor;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use arrow_array::{Array, Float64Array, StringArray};
+use arrow_array::{
+    Array, Date32Array, DurationMicrosecondArray, Float64Array, StringArray,
+    Time64MicrosecondArray, TimestampMicrosecondArray,
+};
 use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 
 use sas_rs::parser::{BoxedParserDataSource, SupportedSas7bdatParser};
@@ -14,8 +19,8 @@ use sas_rs::transform::contracts::{
     SourceFormat, TransformContract, TransformRequest, TransformTuning,
 };
 use sas_rs::transform::pipeline::{
-    ParserTransformService, SourceDataLoader, SourceDataLoaderError, TransformService,
-    TransformStatus,
+    FileSystemSourceLoader, ParserTransformService, SourceDataLoader, SourceDataLoaderError,
+    TransformService, TransformStatus,
 };
 use sas_rs::transform::sink::{
     LocalParquetSink, ParquetSink, ParquetSinkError, ParquetSinkPlan, ParquetSinkReport,
@@ -109,7 +114,7 @@ fn parser_transform_service_writes_selected_and_filtered_parquet_output() {
     assert_eq!(report.status, TransformStatus::ParquetWritten);
     assert_eq!(report.parser.subset_name, "sas7bdat-64le-uncompressed-v1");
     assert_eq!(report.parser.row_count, 3);
-    assert_eq!(report.parser.column_count, 1);
+    assert_eq!(report.parser.column_count, 2);
     assert!(report.parser.selection_applied);
     assert!(report.parser.filter_applied);
     assert_eq!(report.sink.status, ParquetSinkStatus::ParquetWritten);
@@ -117,9 +122,16 @@ fn parser_transform_service_writes_selected_and_filtered_parquet_output() {
     assert_eq!(report.sink.staged_batch_count, 2);
     assert_eq!(
         read_parquet_schema(&output_path),
-        vec![("customer_id".to_string(), "Float64".to_string())]
+        vec![
+            ("customer_id".to_string(), "Float64".to_string()),
+            (
+                "customer_id__sas_missing_tag".to_string(),
+                "Utf8".to_string()
+            ),
+        ]
     );
     assert_eq!(read_float64_column(&output_path, 0), vec![2.5, 3.0]);
+    assert_eq!(read_optional_utf8_column(&output_path, 1), vec![None, None]);
     let _ = std::fs::remove_file(output_path);
 }
 
@@ -201,7 +213,7 @@ fn parser_transform_service_uses_bounded_memory_batches_for_multi_page_output() 
     assert_eq!(read_total_rows(&output_path), 700);
     assert_eq!(read_float64_column(&output_path, 0)[0], 0.0);
     assert_eq!(
-        read_utf8_column(&output_path, 1).last().cloned(),
+        read_utf8_column(&output_path, 2).last().cloned(),
         Some("0699".to_string())
     );
     let _ = std::fs::remove_file(output_path);
@@ -268,7 +280,185 @@ fn parser_transform_service_starts_batching_before_the_full_dataset_is_read() {
     assert_eq!(report.sink.staged_batch_count, 1);
 }
 
-fn example_request(output_path: std::path::PathBuf) -> TransformRequest {
+#[test]
+fn parser_transform_service_projects_semantic_numeric_columns_into_arrow_types() {
+    let output_path = minimal_sas_fixture::unique_tmp_path("transform-semantic-types", "parquet");
+    let mut definition = minimal_sas_fixture::supported_fixture_definition();
+    definition.columns = vec![
+        minimal_sas_fixture::FixtureColumn::Numeric {
+            name: "event_dt".to_string(),
+            width: 8,
+        },
+        minimal_sas_fixture::FixtureColumn::Numeric {
+            name: "event_date".to_string(),
+            width: 8,
+        },
+        minimal_sas_fixture::FixtureColumn::Numeric {
+            name: "event_time".to_string(),
+            width: 8,
+        },
+        minimal_sas_fixture::FixtureColumn::Numeric {
+            name: "elapsed".to_string(),
+            width: 8,
+        },
+    ];
+    definition.column_metadata = vec![
+        minimal_sas_fixture::FixtureColumnMetadata {
+            label: Some("event datetime".to_string()),
+            format_name: Some("DATETIME".to_string()),
+            informat_name: None,
+            format_width: None,
+            format_digits: None,
+        },
+        minimal_sas_fixture::FixtureColumnMetadata {
+            label: Some("event date".to_string()),
+            format_name: Some("DATE".to_string()),
+            informat_name: None,
+            format_width: None,
+            format_digits: None,
+        },
+        minimal_sas_fixture::FixtureColumnMetadata {
+            label: Some("event time".to_string()),
+            format_name: Some("TIME".to_string()),
+            informat_name: None,
+            format_width: None,
+            format_digits: None,
+        },
+        minimal_sas_fixture::FixtureColumnMetadata {
+            label: Some("elapsed duration".to_string()),
+            format_name: Some("HOUR".to_string()),
+            informat_name: None,
+            format_width: None,
+            format_digits: None,
+        },
+    ];
+    definition.rows = vec![vec![
+        minimal_sas_fixture::FixtureValue::Numeric(315_619_200.0),
+        minimal_sas_fixture::FixtureValue::Numeric(3_653.0),
+        minimal_sas_fixture::FixtureValue::Numeric(1.5),
+        minimal_sas_fixture::FixtureValue::Numeric(2.25),
+    ]];
+
+    let loader = InMemorySourceLoader {
+        bytes: minimal_sas_fixture::build_fixture(&definition),
+    };
+    let service = ParserTransformService::new(loader, SupportedSas7bdatParser, LocalParquetSink);
+    let report = service
+        .run(semantic_fixture_request(output_path.clone()))
+        .expect("semantic fixture should transform to parquet");
+
+    assert_eq!(report.status, TransformStatus::ParquetWritten);
+    assert_eq!(
+        read_parquet_schema(&output_path),
+        vec![
+            (
+                "event_dt".to_string(),
+                "Timestamp(Microsecond, None)".to_string()
+            ),
+            ("event_dt__sas_missing_tag".to_string(), "Utf8".to_string()),
+            ("event_date".to_string(), "Date32".to_string()),
+            (
+                "event_date__sas_missing_tag".to_string(),
+                "Utf8".to_string()
+            ),
+            ("event_time".to_string(), "Time64(Microsecond)".to_string()),
+            (
+                "event_time__sas_missing_tag".to_string(),
+                "Utf8".to_string()
+            ),
+            ("elapsed".to_string(), "Duration(Microsecond)".to_string()),
+            ("elapsed__sas_missing_tag".to_string(), "Utf8".to_string()),
+        ]
+    );
+    assert_eq!(read_optional_i64_column(&output_path, 0), vec![Some(0)]);
+    assert_eq!(read_optional_i32_column(&output_path, 2), vec![Some(0)]);
+    assert_eq!(
+        read_optional_i64_column(&output_path, 4),
+        vec![Some(1_500_000)]
+    );
+    assert_eq!(
+        read_optional_i64_column(&output_path, 6),
+        vec![Some(2_250_000)]
+    );
+    assert_eq!(
+        read_field_metadata(&output_path, "event_dt").get("sas.format_name"),
+        Some(&"DATETIME".to_string())
+    );
+    let _ = std::fs::remove_file(output_path);
+}
+
+#[test]
+fn parser_transform_service_preserves_real_date_metadata_in_parquet_schema() {
+    let output_path = minimal_sas_fixture::unique_tmp_path("transform-real-dates", "parquet");
+    let service = ParserTransformService::new(
+        FileSystemSourceLoader,
+        SupportedSas7bdatParser,
+        LocalParquetSink,
+    );
+    let report = service
+        .run(real_dates_request(output_path.clone()))
+        .expect("dates sample should transform to parquet");
+
+    assert_eq!(report.status, TransformStatus::ParquetWritten);
+    assert_eq!(
+        read_parquet_schema(&output_path),
+        vec![
+            ("dt".to_string(), "Timestamp(Microsecond, None)".to_string()),
+            ("dt__sas_missing_tag".to_string(), "Utf8".to_string()),
+            ("dates".to_string(), "Date32".to_string()),
+            ("dates__sas_missing_tag".to_string(), "Utf8".to_string()),
+            ("times".to_string(), "Time64(Microsecond)".to_string()),
+            ("times__sas_missing_tag".to_string(), "Utf8".to_string()),
+        ]
+    );
+    let dt_metadata = read_field_metadata(&output_path, "dt");
+    assert_eq!(
+        dt_metadata.get("sas.semantic_type"),
+        Some(&"datetime".to_string())
+    );
+    assert_eq!(
+        dt_metadata.get("sas.format_name"),
+        Some(&"DATETIME".to_string())
+    );
+    assert_eq!(
+        dt_metadata.get("sas.label"),
+        Some(&"a very long label for testing accuracy of transformations".to_string())
+    );
+    let _ = std::fs::remove_file(output_path);
+}
+
+#[test]
+fn parser_transform_service_preserves_real_special_missing_values_with_sidecar_tags() {
+    let output_path = minimal_sas_fixture::unique_tmp_path("transform-real-missings", "parquet");
+    let service = ParserTransformService::new(
+        FileSystemSourceLoader,
+        SupportedSas7bdatParser,
+        LocalParquetSink,
+    );
+    let report = service
+        .run(real_missing_request(output_path.clone()))
+        .expect("missing_test sample should transform to parquet");
+
+    assert_eq!(report.status, TransformStatus::ParquetWritten);
+    assert_eq!(read_optional_float64_column(&output_path, 0), vec![None]);
+    assert_eq!(
+        read_optional_utf8_column(&output_path, 1),
+        vec![Some("A".to_string())]
+    );
+    assert_eq!(read_optional_float64_column(&output_path, 2), vec![None]);
+    assert_eq!(
+        read_optional_utf8_column(&output_path, 3),
+        vec![Some(".".to_string())]
+    );
+    assert_eq!(
+        read_optional_float64_column(&output_path, 4),
+        vec![Some(1.0)]
+    );
+    assert_eq!(read_optional_utf8_column(&output_path, 5), vec![None]);
+    let _ = std::fs::remove_file(output_path);
+}
+
+fn example_request(output_path: PathBuf) -> TransformRequest {
     TransformRequest {
         source: SourceContract {
             path: "fixtures/example.sas7bdat".into(),
@@ -343,7 +533,7 @@ fn deferred_numeric_request() -> TransformRequest {
     }
 }
 
-fn bounded_memory_request(output_path: std::path::PathBuf) -> TransformRequest {
+fn bounded_memory_request(output_path: PathBuf) -> TransformRequest {
     TransformRequest {
         source: SourceContract {
             path: "fixtures/multi-page.sas7bdat".into(),
@@ -370,7 +560,7 @@ fn bounded_memory_request(output_path: std::path::PathBuf) -> TransformRequest {
     }
 }
 
-fn parallel_batch_request(output_path: std::path::PathBuf) -> TransformRequest {
+fn parallel_batch_request(output_path: PathBuf) -> TransformRequest {
     TransformRequest {
         source: SourceContract {
             path: "fixtures/parallel.sas7bdat".into(),
@@ -388,6 +578,85 @@ fn parallel_batch_request(output_path: std::path::PathBuf) -> TransformRequest {
             tuning: TransformTuning {
                 batch_size_rows: 16_384,
                 worker_threads: Some(4),
+            },
+        },
+        sink: SinkContract {
+            path: output_path,
+            format: SinkFormat::Parquet,
+        },
+    }
+}
+
+fn semantic_fixture_request(output_path: PathBuf) -> TransformRequest {
+    TransformRequest {
+        source: SourceContract {
+            path: "fixtures/semantic-types.sas7bdat".into(),
+            format: SourceFormat::Sas7bdat,
+        },
+        decoder: DecoderContract {
+            mode: DecodeMode::StreamingPages,
+        },
+        transform: TransformContract {
+            selection: Vec::new(),
+            filter: None,
+            execution: ExecutionModel::Streaming,
+            tuning: TransformTuning {
+                batch_size_rows: 8,
+                worker_threads: Some(1),
+            },
+        },
+        sink: SinkContract {
+            path: output_path,
+            format: SinkFormat::Parquet,
+        },
+    }
+}
+
+fn real_dates_request(output_path: PathBuf) -> TransformRequest {
+    TransformRequest {
+        source: SourceContract {
+            path: PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("sample-sas-datasets")
+                .join("dates.sas7bdat"),
+            format: SourceFormat::Sas7bdat,
+        },
+        decoder: DecoderContract {
+            mode: DecodeMode::StreamingPages,
+        },
+        transform: TransformContract {
+            selection: vec!["dt".to_string(), "dates".to_string(), "times".to_string()],
+            filter: None,
+            execution: ExecutionModel::Streaming,
+            tuning: TransformTuning {
+                batch_size_rows: 128,
+                worker_threads: Some(1),
+            },
+        },
+        sink: SinkContract {
+            path: output_path,
+            format: SinkFormat::Parquet,
+        },
+    }
+}
+
+fn real_missing_request(output_path: PathBuf) -> TransformRequest {
+    TransformRequest {
+        source: SourceContract {
+            path: PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("sample-sas-datasets")
+                .join("missing_test.sas7bdat"),
+            format: SourceFormat::Sas7bdat,
+        },
+        decoder: DecoderContract {
+            mode: DecodeMode::StreamingPages,
+        },
+        transform: TransformContract {
+            selection: vec!["var1".to_string(), "var8".to_string(), "var9".to_string()],
+            filter: None,
+            execution: ExecutionModel::Streaming,
+            tuning: TransformTuning {
+                batch_size_rows: 16,
+                worker_threads: Some(1),
             },
         },
         sink: SinkContract {
@@ -424,7 +693,7 @@ fn first_batch_only_request() -> TransformRequest {
     }
 }
 
-fn read_parquet_schema(path: &std::path::Path) -> Vec<(String, String)> {
+fn read_parquet_schema(path: &Path) -> Vec<(String, String)> {
     let reader = File::open(path).expect("parquet output should exist");
     let builder =
         ParquetRecordBatchReaderBuilder::try_new(reader).expect("parquet file should be readable");
@@ -436,7 +705,7 @@ fn read_parquet_schema(path: &std::path::Path) -> Vec<(String, String)> {
         .collect()
 }
 
-fn read_total_rows(path: &std::path::Path) -> usize {
+fn read_total_rows(path: &Path) -> usize {
     let reader = File::open(path).expect("parquet output should exist");
     let record_reader = ParquetRecordBatchReaderBuilder::try_new(reader)
         .expect("parquet file should be readable")
@@ -447,7 +716,7 @@ fn read_total_rows(path: &std::path::Path) -> usize {
         .sum()
 }
 
-fn read_float64_column(path: &std::path::Path, column_index: usize) -> Vec<f64> {
+fn read_optional_float64_column(path: &Path, column_index: usize) -> Vec<Option<f64>> {
     let reader = File::open(path).expect("parquet output should exist");
     let record_reader = ParquetRecordBatchReaderBuilder::try_new(reader)
         .expect("parquet file should be readable")
@@ -462,13 +731,20 @@ fn read_float64_column(path: &std::path::Path, column_index: usize) -> Vec<f64> 
                 .downcast_ref::<Float64Array>()
                 .expect("column should be Float64");
             (0..array.len())
-                .map(|index| array.value(index))
+                .map(|index| (!array.is_null(index)).then(|| array.value(index)))
                 .collect::<Vec<_>>()
         })
         .collect()
 }
 
-fn read_utf8_column(path: &std::path::Path, column_index: usize) -> Vec<String> {
+fn read_float64_column(path: &Path, column_index: usize) -> Vec<f64> {
+    read_optional_float64_column(path, column_index)
+        .into_iter()
+        .map(|value| value.expect("column should not contain nulls in this assertion"))
+        .collect()
+}
+
+fn read_optional_utf8_column(path: &Path, column_index: usize) -> Vec<Option<String>> {
     let reader = File::open(path).expect("parquet output should exist");
     let record_reader = ParquetRecordBatchReaderBuilder::try_new(reader)
         .expect("parquet file should be readable")
@@ -483,8 +759,87 @@ fn read_utf8_column(path: &std::path::Path, column_index: usize) -> Vec<String> 
                 .downcast_ref::<StringArray>()
                 .expect("column should be Utf8");
             (0..array.len())
-                .map(|index| array.value(index).to_string())
+                .map(|index| (!array.is_null(index)).then(|| array.value(index).to_string()))
                 .collect::<Vec<_>>()
         })
         .collect()
+}
+
+fn read_utf8_column(path: &Path, column_index: usize) -> Vec<String> {
+    read_optional_utf8_column(path, column_index)
+        .into_iter()
+        .map(|value| value.expect("column should not contain nulls in this assertion"))
+        .collect()
+}
+
+fn read_optional_i32_column(path: &Path, column_index: usize) -> Vec<Option<i32>> {
+    let reader = File::open(path).expect("parquet output should exist");
+    let record_reader = ParquetRecordBatchReaderBuilder::try_new(reader)
+        .expect("parquet file should be readable")
+        .build()
+        .expect("record batch reader should build");
+    record_reader
+        .flat_map(|batch| {
+            let batch = batch.expect("record batch should decode");
+            let array = batch
+                .column(column_index)
+                .as_any()
+                .downcast_ref::<Date32Array>()
+                .expect("column should be Date32");
+            (0..array.len())
+                .map(|index| (!array.is_null(index)).then(|| array.value(index)))
+                .collect::<Vec<_>>()
+        })
+        .collect()
+}
+
+fn read_optional_i64_column(path: &Path, column_index: usize) -> Vec<Option<i64>> {
+    let reader = File::open(path).expect("parquet output should exist");
+    let record_reader = ParquetRecordBatchReaderBuilder::try_new(reader)
+        .expect("parquet file should be readable")
+        .build()
+        .expect("record batch reader should build");
+    record_reader
+        .flat_map(|batch| {
+            let batch = batch.expect("record batch should decode");
+            if let Some(array) = batch
+                .column(column_index)
+                .as_any()
+                .downcast_ref::<TimestampMicrosecondArray>()
+            {
+                return (0..array.len())
+                    .map(|index| (!array.is_null(index)).then(|| array.value(index)))
+                    .collect::<Vec<_>>();
+            }
+            if let Some(array) = batch
+                .column(column_index)
+                .as_any()
+                .downcast_ref::<Time64MicrosecondArray>()
+            {
+                return (0..array.len())
+                    .map(|index| (!array.is_null(index)).then(|| array.value(index)))
+                    .collect::<Vec<_>>();
+            }
+            let array = batch
+                .column(column_index)
+                .as_any()
+                .downcast_ref::<DurationMicrosecondArray>()
+                .expect("column should be Timestamp, Time64, or Duration in microseconds");
+            (0..array.len())
+                .map(|index| (!array.is_null(index)).then(|| array.value(index)))
+                .collect::<Vec<_>>()
+        })
+        .collect()
+}
+
+fn read_field_metadata(path: &Path, field_name: &str) -> HashMap<String, String> {
+    let reader = File::open(path).expect("parquet output should exist");
+    let builder =
+        ParquetRecordBatchReaderBuilder::try_new(reader).expect("parquet file should be readable");
+    builder
+        .schema()
+        .field_with_name(field_name)
+        .expect("field should exist")
+        .metadata()
+        .clone()
 }

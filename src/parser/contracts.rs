@@ -153,6 +153,22 @@ pub enum ColumnKind {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SemanticTypeHint {
     Deferred,
+    Date,
+    Time,
+    DateTime,
+    Duration,
+}
+
+impl SemanticTypeHint {
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::Deferred => "deferred",
+            Self::Date => "date",
+            Self::Time => "time",
+            Self::DateTime => "datetime",
+            Self::Duration => "duration",
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -160,6 +176,32 @@ pub struct ColumnMetadata {
     pub label: Option<String>,
     pub format_name: Option<String>,
     pub informat_name: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SasMissingTag {
+    Dot,
+    Underscore,
+    Letter(char),
+}
+
+impl SasMissingTag {
+    pub fn code(&self) -> char {
+        match self {
+            Self::Dot => '.',
+            Self::Underscore => '_',
+            Self::Letter(tag) => *tag,
+        }
+    }
+
+    pub fn from_code(tag: char) -> Option<Self> {
+        match tag {
+            '.' => Some(Self::Dot),
+            '_' => Some(Self::Underscore),
+            'A'..='Z' => Some(Self::Letter(tag)),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -174,7 +216,11 @@ pub struct SasColumn {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum NumericValue {
-    Float64(f64),
+    Float64 {
+        value: f64,
+        raw_bits: u64,
+        missing_tag: Option<SasMissingTag>,
+    },
     DeferredBytes {
         width_bytes: usize,
         raw_bytes: Vec<u8>,
@@ -191,29 +237,47 @@ impl NumericValue {
 
     pub fn as_f64(&self) -> Option<f64> {
         match self {
-            Self::Float64(value) => Some(*value),
+            Self::Float64 { value, .. } => Some(*value),
+            Self::DeferredBytes { .. } => None,
+        }
+    }
+
+    pub fn raw_bits(&self) -> Option<u64> {
+        match self {
+            Self::Float64 { raw_bits, .. } => Some(*raw_bits),
             Self::DeferredBytes { .. } => None,
         }
     }
 
     pub fn width_bytes(&self) -> usize {
         match self {
-            Self::Float64(_) => 8,
+            Self::Float64 { .. } => 8,
             Self::DeferredBytes { width_bytes, .. } => *width_bytes,
         }
     }
 
     pub fn raw_bytes(&self) -> Option<&[u8]> {
         match self {
-            Self::Float64(_) => None,
+            Self::Float64 { .. } => None,
             Self::DeferredBytes { raw_bytes, .. } => Some(raw_bytes.as_slice()),
+        }
+    }
+
+    pub fn missing_tag(&self) -> Option<SasMissingTag> {
+        match self {
+            Self::Float64 { missing_tag, .. } => *missing_tag,
+            Self::DeferredBytes { .. } => None,
         }
     }
 }
 
 impl From<f64> for NumericValue {
     fn from(value: f64) -> Self {
-        Self::Float64(value)
+        Self::Float64 {
+            value,
+            raw_bits: value.to_bits(),
+            missing_tag: None,
+        }
     }
 }
 
@@ -246,12 +310,28 @@ pub struct SasMetadata {
     pub columns: Vec<SasColumn>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct SubheaderRowRef {
+    pub offset: usize,
+    pub len: usize,
+    pub compression: CompressionMode,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct PageRowSource {
+    pub page_index: usize,
+    pub raw_data_offset: Option<usize>,
+    pub raw_row_count: usize,
+    pub subheader_rows: Vec<SubheaderRowRef>,
+}
+
 pub struct ParsedSas7bdat {
     pub metadata: SasMetadata,
     pub(crate) reader: BoxedParserDataSource,
     pub(crate) header_size: usize,
-    pub(crate) data_pages: Vec<usize>,
-    pub(crate) next_data_page: usize,
+    pub(crate) row_sources: Vec<PageRowSource>,
+    pub(crate) text_encoding_code: u8,
+    pub(crate) next_row_source: usize,
     pub(crate) pending_rows: VecDeque<ParsedRow>,
     pub(crate) next_row_index: usize,
 }
@@ -262,8 +342,8 @@ impl std::fmt::Debug for ParsedSas7bdat {
             .debug_struct("ParsedSas7bdat")
             .field("metadata", &self.metadata)
             .field("header_size", &self.header_size)
-            .field("data_pages", &self.data_pages)
-            .field("next_data_page", &self.next_data_page)
+            .field("row_sources", &self.row_sources)
+            .field("next_row_source", &self.next_row_source)
             .field("pending_rows", &self.pending_rows)
             .field("next_row_index", &self.next_row_index)
             .finish()
@@ -271,18 +351,20 @@ impl std::fmt::Debug for ParsedSas7bdat {
 }
 
 impl ParsedSas7bdat {
-    pub fn new_streaming(
+    pub(crate) fn new_streaming(
         metadata: SasMetadata,
         reader: BoxedParserDataSource,
         header_size: usize,
-        data_pages: Vec<usize>,
+        row_sources: Vec<PageRowSource>,
+        text_encoding_code: u8,
     ) -> Self {
         Self {
             metadata,
             reader,
             header_size,
-            data_pages,
-            next_data_page: 0,
+            row_sources,
+            text_encoding_code,
+            next_row_source: 0,
             pending_rows: VecDeque::new(),
             next_row_index: 0,
         }

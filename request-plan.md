@@ -4,7 +4,7 @@
 - user_goal: Build SAS-rs from the attached spec into the fastest practical `.sas7bdat` reader possible, with a CLI that transforms to parquet, strong benchmarking, unit tests, idiomatic Rust, larger-than-memory performance, and the broader compatibility and correctness coverage explicitly required by spec.md.
 - authoritative_spec: spec.md
 - request_baseline_note: This is a materially reopened request against the full authoritative spec. The prior subset-complete request plan is no longer authoritative because it did not satisfy the full layout, endianness, encoding, compression, page and subheader, semantic typing, metadata preservation, fuzzing, regression, and proof obligations in spec.md.
-- current_request_state: pr_scope_ready
+- current_request_state: pr_scope_in_progress
 
 ## Ordered PR Scopes
 
@@ -16,28 +16,28 @@
    - why_now: The current code hard-codes a narrow physical value model. Later layout, encoding, compression, and semantic work will be brittle unless the shared contracts and validation seams are generalized first, and the user explicitly wants the first real-dataset probe to happen now rather than after a synthetic-only review.
 
 2. portable_core_decode_layouts_endianness_encodings_and_subheaders
-   - status: ready
+   - status: complete
    - objective: Extend the core parser to handle 32-bit and 64-bit layouts, little-endian and big-endian variants, non-UTF-8 encodings with latin-1 support, and the broader subheader set required for those files.
    - included_requirements: 12, 13, 14, 18
    - deferred_requirements: 1, 2, 3, 4, 9, 10, 11, 15, 16, 17, 20, 21, 22, 23, 24, 25, 26
    - why_later: Depends on PR-01 providing matrix-capable contracts and keeping layout portability separate from compression and semantic policy.
 
 3. compression_and_full_page_type_coverage
-   - status: planned
+   - status: complete
    - objective: Add row compression, binary compression, and the broader page-type dispatcher coverage needed to process files outside the current META and DATA subset while preserving streaming behavior.
    - included_requirements: 15, 16, 17
    - deferred_requirements: 1, 2, 3, 4, 9, 10, 11, 20, 21, 22, 23, 24, 25, 26
    - why_later: Compression and page-dispatch expansion are tightly coupled, but they should build on the portable core decode from PR-02.
 
 4. semantic_sas_typing_and_metadata_preservation
-   - status: planned
+   - status: complete
    - objective: Map physical SAS values into honest Arrow and Parquet semantics, including dates, times, datetimes, duration-like values, labels, formats, informats, and SAS special missing values.
    - included_requirements: 11, 20, 21, 22
    - deferred_requirements: 1, 2, 3, 4, 9, 10, 23, 24, 25, 26
    - why_later: This scope needs the broader physical decode matrix in place first so semantic policy is applied once rather than duplicated across earlier parser changes.
 
 5. robustness_corpus_fuzzing_and_differential_validation
-   - status: planned
+   - status: in_progress
    - objective: Build the broadened safety net with malformed-input coverage, fuzzing, a real regression corpus, an automated sweep over sample-sas-datasets, and differential validation against a trusted reader.
    - included_requirements: 6, 23, 24
    - deferred_requirements: 1, 2, 3, 4, 9, 10, 25, 26
@@ -52,11 +52,14 @@
 
 ## Active PR Scope
 
-- active_pr_scope: portable_core_decode_layouts_endianness_encodings_and_subheaders
+- active_pr_scope: robustness_corpus_fuzzing_and_differential_validation
 
 ## Completed PR Scopes
 
 - capability_contracts_numeric_widths_and_honest_harness
+- portable_core_decode_layouts_endianness_encodings_and_subheaders
+- compression_and_full_page_type_coverage
+- semantic_sas_typing_and_metadata_preservation
 
 ## Deferred PR Scopes
 
@@ -80,4 +83,4 @@
 ## Final Response Readiness
 
 - final_response_readiness: not ready
-- reason: PR-01 is complete and PR-02 is the next ready scope, but the full request still has multiple unresolved planned scopes and no broadened compatibility proof yet.
+- reason: PR-01 through PR-04 are complete, PR-05 is now active, and the full request still has unresolved robustness/corpus validation and final performance-closure scopes.

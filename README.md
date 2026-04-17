@@ -21,23 +21,25 @@ The project does not currently claim universal `.sas7bdat` coverage.
 
 ### Parser boundary
 
-The parser supports the named subset `sas7bdat-64le-uncompressed-v1`:
+The parser currently supports the current physical subset across these variants:
 
-- 64-bit layout only
-- little-endian files only
-- UTF-8 encoding only
-- uncompressed files only
-- `META` and `DATA` pages only
+- 32-bit and 64-bit layouts
+- little-endian and big-endian files
+- UTF-8, latin-1, and Windows-1252 text decoding
+- row-compressed and binary-compressed rows carried in subheaders
+- `META`, `DATA`, and `MIX` pages encountered in the current sample-file boundary
 - the currently handled subheaders:
   - row size
   - column size
+  - counts
   - column text
+  - column list
   - column name
   - column attributes
   - column format headers only to the extent needed to validate layout
 - column kinds:
-  - 8-byte numeric values
-  - fixed-width string values
+  - physical numeric columns with widths from 1 through 8 bytes
+  - fixed-width string values decoded through the declared source encoding
 
 ### Transform boundary
 
@@ -57,6 +59,9 @@ The transform pipeline currently supports:
 The repository includes:
 
 - unit and integration tests for CLI, parser, transform, and streaming honesty checks
+- real-sample parser coverage showing:
+  - `sample-sas-datasets/10rec.sas7bdat` reads end to end through the current parser entrypoint
+  - `sample-sas-datasets/fts0003.sas7bdat` now reads end to end through row-compressed subheaders plus the trailing `MIX` page
 - Criterion benchmarks for:
   - projection assumptions
   - parser-stage timing
@@ -73,13 +78,11 @@ That is strong evidence for the supported synthetic workload. It is not a claim 
 
 The project intentionally rejects or does not yet model these areas:
 
-- 32-bit `.sas7bdat` layout
-- big-endian files
-- non-UTF-8 encodings
-- row-compressed, binary-compressed, or otherwise compressed files
-- page types outside the current `META` and `DATA` subset
+- compressed page layouts or page types outside the current `META` / `DATA` / `MIX` subset
+- unknown compression modes beyond the current row-compressed and binary-compressed coverage
 - subheader signatures outside the currently recognized set
-- numeric widths other than 8 bytes
+- numeric widths greater than 8 bytes
+- semantic materialization of non-8-byte numeric widths
 - column types beyond the current numeric/string subset
 - semantic SAS typing such as:
   - dates

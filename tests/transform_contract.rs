@@ -102,7 +102,7 @@ fn transform_execution_accepts_physical_numeric_columns_without_forcing_semantic
     let execution = TransformExecution::from_request(&request, &metadata)
         .expect("physical numeric columns should still plan successfully");
 
-    assert_eq!(execution.output_column_count(), 1);
+    assert_eq!(execution.output_column_count(), 2);
     assert!(execution.selection_applied());
     assert!(execution.filter_applied());
 }

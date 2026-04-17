@@ -5,15 +5,19 @@ use std::fs::{self, File};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, OnceLock};
 
-use arrow_array::{ArrayRef, Float64Array, RecordBatch, StringArray};
-use arrow_schema::{DataType, Field, Schema};
+use arrow_array::{
+    ArrayRef, Date32Array, DurationMicrosecondArray, Float64Array, RecordBatch, StringArray,
+    Time64MicrosecondArray, TimestampMicrosecondArray,
+};
+use arrow_schema::{DataType, Field, Schema, TimeUnit};
 use parquet::arrow::ArrowWriter;
 use parquet::file::properties::WriterProperties;
 use rayon::prelude::*;
 use rayon::{ThreadPool, ThreadPoolBuilder};
 
 use crate::parser::contracts::{
-    ColumnKind, NumericValue, ParsedRow, ParsedSas7bdat, ParsedValue, RowBatch, SasMetadata,
+    ColumnKind, NumericValue, ParsedRow, ParsedSas7bdat, ParsedValue, RowBatch, SasColumn,
+    SasMetadata, SasMissingTag, SemanticTypeHint,
 };
 
 use super::contracts::{ExecutionModel, SinkFormat, TransformRequest};
@@ -175,10 +179,13 @@ impl TransformExecution {
                 .columns
                 .iter()
                 .enumerate()
-                .map(|(index, column)| ProjectionColumn::new(index, column))
+                .map(|(index, column)| ProjectionColumn::from_source(index, column))
                 .collect::<Result<Vec<_>, _>>()?
+                .into_iter()
+                .flatten()
+                .collect()
         } else {
-            let mut projected_columns = Vec::with_capacity(request.transform.selection.len());
+            let mut projected_columns = Vec::with_capacity(request.transform.selection.len() * 2);
             for name in &request.transform.selection {
                 let (index, column) = metadata
                     .columns
@@ -196,7 +203,7 @@ impl TransformExecution {
                         "duplicate selected column: {name}"
                     )));
                 }
-                projected_columns.push(ProjectionColumn::new(index, column)?);
+                projected_columns.extend(ProjectionColumn::from_source(index, column)?);
             }
             projected_columns
         };
@@ -349,22 +356,35 @@ struct ProjectionColumn {
     source_index: usize,
     name: String,
     kind: ProjectionKind,
+    nullable: bool,
+    metadata: HashMap<String, String>,
 }
 
 impl ProjectionColumn {
-    fn new(
+    fn from_source(
         source_index: usize,
-        column: &crate::parser::contracts::SasColumn,
-    ) -> Result<Self, TransformExecutionError> {
-        let kind = match column.kind {
-            ColumnKind::Numeric => ProjectionKind::Float64,
-            ColumnKind::String => ProjectionKind::Utf8,
-        };
-        Ok(Self {
+        column: &SasColumn,
+    ) -> Result<Vec<Self>, TransformExecutionError> {
+        let primary_kind = ProjectionKind::from_source_column(column);
+        let mut projected_columns = vec![Self {
             source_index,
             name: column.name.clone(),
-            kind,
-        })
+            nullable: primary_kind.is_nullable(),
+            metadata: primary_field_metadata(column),
+            kind: primary_kind,
+        }];
+
+        if column.kind == ColumnKind::Numeric {
+            projected_columns.push(Self {
+                source_index,
+                name: missing_tag_column_name(&column.name),
+                kind: ProjectionKind::MissingTagUtf8,
+                nullable: true,
+                metadata: missing_tag_field_metadata(column),
+            });
+        }
+
+        Ok(projected_columns)
     }
 }
 
@@ -372,6 +392,86 @@ impl ProjectionColumn {
 enum ProjectionKind {
     Float64,
     Utf8,
+    Date32,
+    Time64Microsecond,
+    TimestampMicrosecond,
+    DurationMicrosecond,
+    MissingTagUtf8,
+}
+
+impl ProjectionKind {
+    fn from_source_column(column: &SasColumn) -> Self {
+        match column.kind {
+            ColumnKind::String => Self::Utf8,
+            ColumnKind::Numeric => match column.semantic_type {
+                SemanticTypeHint::Deferred => Self::Float64,
+                SemanticTypeHint::Date => Self::Date32,
+                SemanticTypeHint::Time => Self::Time64Microsecond,
+                SemanticTypeHint::DateTime => Self::TimestampMicrosecond,
+                SemanticTypeHint::Duration => Self::DurationMicrosecond,
+            },
+        }
+    }
+
+    fn data_type(&self) -> DataType {
+        match self {
+            Self::Float64 => DataType::Float64,
+            Self::Utf8 | Self::MissingTagUtf8 => DataType::Utf8,
+            Self::Date32 => DataType::Date32,
+            Self::Time64Microsecond => DataType::Time64(TimeUnit::Microsecond),
+            Self::TimestampMicrosecond => DataType::Timestamp(TimeUnit::Microsecond, None),
+            Self::DurationMicrosecond => DataType::Duration(TimeUnit::Microsecond),
+        }
+    }
+
+    fn is_nullable(&self) -> bool {
+        !matches!(self, Self::Utf8)
+    }
+}
+
+fn missing_tag_column_name(column_name: &str) -> String {
+    format!("{column_name}__sas_missing_tag")
+}
+
+fn primary_field_metadata(column: &SasColumn) -> HashMap<String, String> {
+    let mut metadata = HashMap::from([
+        (
+            "sas.kind".to_string(),
+            match column.kind {
+                ColumnKind::Numeric => "numeric",
+                ColumnKind::String => "string",
+            }
+            .to_string(),
+        ),
+        (
+            "sas.semantic_type".to_string(),
+            column.semantic_type.label().to_string(),
+        ),
+    ]);
+    if let Some(label) = &column.metadata.label {
+        metadata.insert("sas.label".to_string(), label.clone());
+    }
+    if let Some(format_name) = &column.metadata.format_name {
+        metadata.insert("sas.format_name".to_string(), format_name.clone());
+    }
+    if let Some(informat_name) = &column.metadata.informat_name {
+        metadata.insert("sas.informat_name".to_string(), informat_name.clone());
+    }
+    if column.kind == ColumnKind::Numeric {
+        metadata.insert(
+            "sas.missing_tag_column".to_string(),
+            missing_tag_column_name(&column.name),
+        );
+    }
+    metadata
+}
+
+fn missing_tag_field_metadata(column: &SasColumn) -> HashMap<String, String> {
+    HashMap::from([
+        ("sas.kind".to_string(), "missing_tag".to_string()),
+        ("sas.parent_column".to_string(), column.name.clone()),
+        ("sas.tag_domain".to_string(), ". _ A-Z".to_string()),
+    ])
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -415,15 +515,31 @@ struct TypedBatchChunk {
 
 #[derive(Debug, Clone, PartialEq)]
 enum TypedColumn {
-    Float64(Vec<f64>),
-    Utf8(Vec<String>),
+    Float64(Vec<Option<f64>>),
+    Utf8(Vec<Option<String>>),
+    Date32(Vec<Option<i32>>),
+    Time64Microsecond(Vec<Option<i64>>),
+    TimestampMicrosecond(Vec<Option<i64>>),
+    DurationMicrosecond(Vec<Option<i64>>),
 }
 
 impl TypedColumn {
     fn with_capacity(kind: ProjectionKind, capacity: usize) -> Self {
         match kind {
             ProjectionKind::Float64 => Self::Float64(Vec::with_capacity(capacity)),
-            ProjectionKind::Utf8 => Self::Utf8(Vec::with_capacity(capacity)),
+            ProjectionKind::Utf8 | ProjectionKind::MissingTagUtf8 => {
+                Self::Utf8(Vec::with_capacity(capacity))
+            }
+            ProjectionKind::Date32 => Self::Date32(Vec::with_capacity(capacity)),
+            ProjectionKind::Time64Microsecond => {
+                Self::Time64Microsecond(Vec::with_capacity(capacity))
+            }
+            ProjectionKind::TimestampMicrosecond => {
+                Self::TimestampMicrosecond(Vec::with_capacity(capacity))
+            }
+            ProjectionKind::DurationMicrosecond => {
+                Self::DurationMicrosecond(Vec::with_capacity(capacity))
+            }
         }
     }
 
@@ -433,25 +549,36 @@ impl TypedColumn {
         column_name: &str,
     ) -> Result<(), TransformExecutionError> {
         match (self, value) {
-            (Self::Float64(values), ParsedValue::Numeric(NumericValue::Float64(value))) => {
-                values.push(*value);
+            (Self::Float64(values), ParsedValue::Numeric(numeric)) => {
+                values.push(materialized_float64(numeric, column_name)?);
                 Ok(())
             }
-            (
-                Self::Float64(_),
-                ParsedValue::Numeric(NumericValue::DeferredBytes { width_bytes, .. }),
-            ) => Err(TransformExecutionError::new(format!(
-                "column {column_name} is a {width_bytes}-byte numeric and numeric materialization is deferred"
-            ))),
+            (Self::Date32(values), ParsedValue::Numeric(numeric)) => {
+                values.push(materialized_date32(numeric, column_name)?);
+                Ok(())
+            }
+            (Self::Time64Microsecond(values), ParsedValue::Numeric(numeric)) => {
+                values.push(materialized_time64_micros(numeric, column_name)?);
+                Ok(())
+            }
+            (Self::TimestampMicrosecond(values), ParsedValue::Numeric(numeric)) => {
+                values.push(materialized_timestamp_micros(numeric, column_name)?);
+                Ok(())
+            }
+            (Self::DurationMicrosecond(values), ParsedValue::Numeric(numeric)) => {
+                values.push(materialized_duration_micros(numeric, column_name)?);
+                Ok(())
+            }
             (Self::Utf8(values), ParsedValue::String(value)) => {
-                values.push(value.clone());
+                values.push(Some(value.clone()));
                 Ok(())
             }
-            (Self::Float64(_), ParsedValue::String(_)) => Err(TransformExecutionError::new(
-                format!("column {column_name} expected a numeric value"),
-            )),
-            (Self::Utf8(_), ParsedValue::Numeric(_)) => Err(TransformExecutionError::new(format!(
-                "column {column_name} expected a string value"
+            (Self::Utf8(values), ParsedValue::Numeric(numeric)) => {
+                values.push(numeric.missing_tag().map(|tag| tag.code().to_string()));
+                Ok(())
+            }
+            (_, ParsedValue::String(_)) => Err(TransformExecutionError::new(format!(
+                "column {column_name} expected a numeric value"
             ))),
         }
     }
@@ -462,11 +589,113 @@ impl TypedColumn {
                 values.append(&mut other_values)
             }
             (Self::Utf8(values), Self::Utf8(mut other_values)) => values.append(&mut other_values),
-            (Self::Float64(_), Self::Utf8(_)) | (Self::Utf8(_), Self::Float64(_)) => {
-                unreachable!("typed chunk columns always follow the execution schema")
+            (Self::Date32(values), Self::Date32(mut other_values)) => {
+                values.append(&mut other_values)
             }
+            (Self::Time64Microsecond(values), Self::Time64Microsecond(mut other_values)) => {
+                values.append(&mut other_values)
+            }
+            (Self::TimestampMicrosecond(values), Self::TimestampMicrosecond(mut other_values)) => {
+                values.append(&mut other_values)
+            }
+            (Self::DurationMicrosecond(values), Self::DurationMicrosecond(mut other_values)) => {
+                values.append(&mut other_values)
+            }
+            _ => unreachable!("typed chunk columns always follow the execution schema"),
         }
     }
+}
+
+const SAS_EPOCH_DAYS_TO_UNIX_EPOCH: i32 = 3_653;
+const MICROS_PER_SECOND: f64 = 1_000_000.0;
+const SECONDS_PER_DAY: f64 = 86_400.0;
+
+fn materialized_float64(
+    numeric: &NumericValue,
+    column_name: &str,
+) -> Result<Option<f64>, TransformExecutionError> {
+    let (value, missing_tag) = materialized_numeric_parts(numeric, column_name)?;
+    Ok(if missing_tag.is_some() {
+        None
+    } else {
+        Some(value)
+    })
+}
+
+fn materialized_date32(
+    numeric: &NumericValue,
+    column_name: &str,
+) -> Result<Option<i32>, TransformExecutionError> {
+    let (value, missing_tag) = materialized_numeric_parts(numeric, column_name)?;
+    if missing_tag.is_some() {
+        return Ok(None);
+    }
+    let whole_days = expect_whole_number(value, column_name)?;
+    Ok(Some(
+        (whole_days as i64 - SAS_EPOCH_DAYS_TO_UNIX_EPOCH as i64) as i32,
+    ))
+}
+
+fn materialized_time64_micros(
+    numeric: &NumericValue,
+    column_name: &str,
+) -> Result<Option<i64>, TransformExecutionError> {
+    let (value, missing_tag) = materialized_numeric_parts(numeric, column_name)?;
+    if missing_tag.is_some() {
+        return Ok(None);
+    }
+    Ok(Some((value * MICROS_PER_SECOND).round() as i64))
+}
+
+fn materialized_timestamp_micros(
+    numeric: &NumericValue,
+    column_name: &str,
+) -> Result<Option<i64>, TransformExecutionError> {
+    let (value, missing_tag) = materialized_numeric_parts(numeric, column_name)?;
+    if missing_tag.is_some() {
+        return Ok(None);
+    }
+    Ok(Some(
+        ((value - SAS_EPOCH_DAYS_TO_UNIX_EPOCH as f64 * SECONDS_PER_DAY) * MICROS_PER_SECOND)
+            .round() as i64,
+    ))
+}
+
+fn materialized_duration_micros(
+    numeric: &NumericValue,
+    column_name: &str,
+) -> Result<Option<i64>, TransformExecutionError> {
+    let (value, missing_tag) = materialized_numeric_parts(numeric, column_name)?;
+    if missing_tag.is_some() {
+        return Ok(None);
+    }
+    Ok(Some((value * MICROS_PER_SECOND).round() as i64))
+}
+
+fn materialized_numeric_parts(
+    numeric: &NumericValue,
+    column_name: &str,
+) -> Result<(f64, Option<SasMissingTag>), TransformExecutionError> {
+    match numeric {
+        NumericValue::Float64 {
+            value, missing_tag, ..
+        } => Ok((*value, *missing_tag)),
+        NumericValue::DeferredBytes { width_bytes, .. } => {
+            Err(TransformExecutionError::new(format!(
+                "column {column_name} is a {width_bytes}-byte numeric and numeric materialization is deferred"
+            )))
+        }
+    }
+}
+
+fn expect_whole_number(value: f64, column_name: &str) -> Result<i32, TransformExecutionError> {
+    let rounded = value.round();
+    if (value - rounded).abs() > 1e-9 {
+        return Err(TransformExecutionError::new(format!(
+            "column {column_name} requires whole-number day values for date materialization"
+        )));
+    }
+    Ok(rounded as i32)
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -516,7 +745,7 @@ impl FilterPredicate {
         match (&self.literal, value) {
             (
                 FilterLiteral::Numeric(expected),
-                ParsedValue::Numeric(NumericValue::Float64(actual)),
+                ParsedValue::Numeric(NumericValue::Float64 { value: actual, .. }),
             ) => Ok(self.operator.apply_numeric(*actual, *expected)),
             (
                 FilterLiteral::Numeric(_),
@@ -767,7 +996,7 @@ impl StreamingParquetSink for LocalParquetSink {
             _ => {}
         }
 
-        let schema = Arc::new(build_arrow_schema(execution));
+        let schema = Arc::new(build_arrow_schema(execution, &dataset.metadata));
         let file = File::create(&plan.output_path)
             .map_err(|error| ParquetSinkError::new(error.to_string()))?;
         let properties = WriterProperties::builder()
@@ -821,19 +1050,30 @@ impl StreamingParquetSink for LocalParquetSink {
     }
 }
 
-fn build_arrow_schema(execution: &TransformExecution) -> Schema {
+fn build_arrow_schema(execution: &TransformExecution, metadata: &SasMetadata) -> Schema {
     let fields = execution
         .projected_columns
         .iter()
         .map(|column| {
-            let data_type = match column.kind {
-                ProjectionKind::Float64 => DataType::Float64,
-                ProjectionKind::Utf8 => DataType::Utf8,
-            };
-            Field::new(column.name.clone(), data_type, false)
+            Field::new(
+                column.name.clone(),
+                column.kind.data_type(),
+                column.nullable,
+            )
+            .with_metadata(column.metadata.clone())
         })
         .collect::<Vec<_>>();
-    Schema::new(fields)
+    Schema::new_with_metadata(
+        fields,
+        HashMap::from([
+            ("sas.table_name".to_string(), metadata.table_name.clone()),
+            ("sas.file_label".to_string(), metadata.file_label.clone()),
+            (
+                "sas.subset_name".to_string(),
+                metadata.subset.name.to_string(),
+            ),
+        ]),
+    )
 }
 
 fn typed_batch_to_record_batch(batch: TypedBatch, schema: Arc<Schema>) -> RecordBatch {
@@ -843,6 +1083,16 @@ fn typed_batch_to_record_batch(batch: TypedBatch, schema: Arc<Schema>) -> Record
         .map(|column| match column {
             TypedColumn::Float64(values) => Arc::new(Float64Array::from(values)) as ArrayRef,
             TypedColumn::Utf8(values) => Arc::new(StringArray::from(values)) as ArrayRef,
+            TypedColumn::Date32(values) => Arc::new(Date32Array::from(values)) as ArrayRef,
+            TypedColumn::Time64Microsecond(values) => {
+                Arc::new(Time64MicrosecondArray::from(values)) as ArrayRef
+            }
+            TypedColumn::TimestampMicrosecond(values) => {
+                Arc::new(TimestampMicrosecondArray::from(values)) as ArrayRef
+            }
+            TypedColumn::DurationMicrosecond(values) => {
+                Arc::new(DurationMicrosecondArray::from(values)) as ArrayRef
+            }
         })
         .collect::<Vec<_>>();
     RecordBatch::try_new(schema, arrays)
@@ -859,4 +1109,100 @@ fn strip_quotes(token: &str) -> &str {
         }
     }
     token
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::parser::SUPPORTED_SUBSET;
+    use crate::transform::contracts::{
+        DecodeMode, DecoderContract, ExecutionModel, SinkContract, SinkFormat, SourceContract,
+        SourceFormat, TransformContract, TransformRequest, TransformTuning,
+    };
+
+    #[test]
+    fn arrow_schema_preserves_parser_metadata_including_informats() {
+        let metadata = SasMetadata {
+            subset: SUPPORTED_SUBSET,
+            table_name: "DATASET".to_string(),
+            file_label: "labelled dataset".to_string(),
+            row_count: 1,
+            row_length: 8,
+            page_size: 4096,
+            page_count: 1,
+            columns: vec![SasColumn {
+                name: "event_dt".to_string(),
+                kind: ColumnKind::Numeric,
+                offset: 0,
+                width: 8,
+                semantic_type: SemanticTypeHint::DateTime,
+                metadata: crate::parser::contracts::ColumnMetadata {
+                    label: Some("event timestamp".to_string()),
+                    format_name: Some("DATETIME".to_string()),
+                    informat_name: Some("ANYDTDTM".to_string()),
+                },
+            }],
+        };
+        let request = TransformRequest {
+            source: SourceContract {
+                path: "fixtures/example.sas7bdat".into(),
+                format: SourceFormat::Sas7bdat,
+            },
+            decoder: DecoderContract {
+                mode: DecodeMode::StreamingPages,
+            },
+            transform: TransformContract {
+                selection: vec!["event_dt".to_string()],
+                filter: None,
+                execution: ExecutionModel::Streaming,
+                tuning: TransformTuning {
+                    batch_size_rows: 64,
+                    worker_threads: Some(1),
+                },
+            },
+            sink: SinkContract {
+                path: "fixtures/example.parquet".into(),
+                format: SinkFormat::Parquet,
+            },
+        };
+
+        let execution = TransformExecution::from_request(&request, &metadata)
+            .expect("metadata-bearing schema planning should succeed");
+        let schema = build_arrow_schema(&execution, &metadata);
+        let field = schema
+            .field_with_name("event_dt")
+            .expect("field should exist");
+        let missing_tag_field = schema
+            .field_with_name("event_dt__sas_missing_tag")
+            .expect("missing-tag sidecar should exist");
+
+        assert_eq!(
+            field.metadata().get("sas.label"),
+            Some(&"event timestamp".to_string())
+        );
+        assert_eq!(
+            field.metadata().get("sas.format_name"),
+            Some(&"DATETIME".to_string())
+        );
+        assert_eq!(
+            field.metadata().get("sas.informat_name"),
+            Some(&"ANYDTDTM".to_string())
+        );
+        assert_eq!(
+            field.metadata().get("sas.semantic_type"),
+            Some(&"datetime".to_string())
+        );
+        assert_eq!(
+            field.metadata().get("sas.missing_tag_column"),
+            Some(&"event_dt__sas_missing_tag".to_string())
+        );
+        assert_eq!(
+            missing_tag_field.metadata().get("sas.parent_column"),
+            Some(&"event_dt".to_string())
+        );
+        assert_eq!(
+            schema.metadata().get("sas.table_name"),
+            Some(&"DATASET".to_string())
+        );
+    }
 }
