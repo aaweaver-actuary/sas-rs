@@ -5,9 +5,9 @@ use std::io::{Read, Seek, SeekFrom};
 pub mod contracts;
 
 pub use contracts::{
-    BoxedParserDataSource, ColumnKind, CompressionMode, Endianness, ParsedRow, ParsedSas7bdat,
-    ParsedValue, ParserDataSource, ParserInput, RowBatch, SUPPORTED_SUBSET, SasColumn, SasMetadata,
-    SupportedSubset, WordSize,
+    BoxedParserDataSource, ColumnKind, ColumnMetadata, CompressionMode, Endianness, NumericValue,
+    ParsedRow, ParsedSas7bdat, ParsedValue, ParserDataSource, ParserInput, RowBatch,
+    SUPPORTED_SUBSET, SasColumn, SasMetadata, SemanticTypeHint, SupportedSubset, WordSize,
 };
 
 const MAGIC_NUMBER: [u8; 32] = [
@@ -524,7 +524,7 @@ fn parse_column_attrs_subheader(
             offset + 14,
             "column attrs subheader is truncated",
         )? {
-            SAS_COLUMN_TYPE_NUM => ColumnKind::Numeric64,
+            SAS_COLUMN_TYPE_NUM => ColumnKind::Numeric,
             SAS_COLUMN_TYPE_CHR => ColumnKind::String,
             code => {
                 return Err(ParserError::Unsupported(UnsupportedFeature::ColumnType(
@@ -576,10 +576,23 @@ fn finalize_columns(metadata: &PartialMetadata) -> Result<Vec<SasColumn>, Parser
             "column offset metadata is incomplete",
         ))?;
 
-        if matches!(kind, ColumnKind::Numeric64) && width != 8 {
-            return Err(ParserError::Unsupported(UnsupportedFeature::NumericWidth(
-                width as u32,
-            )));
+        match kind {
+            ColumnKind::Numeric if width == 0 => {
+                return Err(ParserError::InvalidFormat(
+                    "numeric column width must be greater than zero",
+                ));
+            }
+            ColumnKind::Numeric if width > 8 => {
+                return Err(ParserError::Unsupported(UnsupportedFeature::NumericWidth(
+                    width as u32,
+                )));
+            }
+            ColumnKind::String if width == 0 => {
+                return Err(ParserError::InvalidFormat(
+                    "string column width must be greater than zero",
+                ));
+            }
+            _ => {}
         }
 
         columns.push(SasColumn {
@@ -587,6 +600,8 @@ fn finalize_columns(metadata: &PartialMetadata) -> Result<Vec<SasColumn>, Parser
             kind,
             offset,
             width,
+            semantic_type: SemanticTypeHint::Deferred,
+            metadata: ColumnMetadata::default(),
         });
     }
 
@@ -606,17 +621,35 @@ fn parse_row(row: &[u8], metadata: &SasMetadata) -> Result<ParsedRow, ParserErro
             .ok_or(ParserError::InvalidFormat("column value is truncated"))?;
 
         let value = match column.kind {
-            ColumnKind::Numeric64 => {
-                ParsedValue::Numeric(f64::from_le_bytes(raw_value.try_into().map_err(|_| {
-                    ParserError::InvalidFormat("numeric value width must be 8 bytes")
-                })?))
-            }
+            ColumnKind::Numeric => parse_numeric_value(raw_value)?,
             ColumnKind::String => ParsedValue::String(trim_ascii_field(raw_value)),
         };
         values.push(value);
     }
 
     Ok(ParsedRow { values })
+}
+
+fn parse_numeric_value(raw_value: &[u8]) -> Result<ParsedValue, ParserError> {
+    match raw_value.len() {
+        0 => Err(ParserError::InvalidFormat(
+            "numeric value width must be greater than zero",
+        )),
+        1..=7 => Ok(ParsedValue::Numeric(NumericValue::deferred_bytes(
+            raw_value.to_vec(),
+        ))),
+        8 => {
+            Ok(ParsedValue::Numeric(
+                f64::from_le_bytes(raw_value.try_into().map_err(|_| {
+                    ParserError::InvalidFormat("numeric value width must be 8 bytes")
+                })?)
+                .into(),
+            ))
+        }
+        width => Err(ParserError::Unsupported(UnsupportedFeature::NumericWidth(
+            width as u32,
+        ))),
+    }
 }
 
 fn parse_subheader_pointers(page: &[u8]) -> Result<Vec<SubheaderPointer>, ParserError> {

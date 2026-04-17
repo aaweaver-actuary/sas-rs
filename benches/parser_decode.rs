@@ -4,6 +4,8 @@ mod minimal_sas_fixture;
 use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
 use sas_rs::parser::{ParserInput, Sas7bdatParser, SupportedSas7bdatParser};
 
+const BENCH_BATCH_SIZE_ROWS: usize = 8_192;
+
 fn parser_decode_benchmark(criterion: &mut Criterion) {
     let parser = SupportedSas7bdatParser;
     let mut group = criterion.benchmark_group("parser_decode_supported_subset");
@@ -16,13 +18,27 @@ fn parser_decode_benchmark(criterion: &mut Criterion) {
             &bytes,
             |bencher, bytes| {
                 bencher.iter(|| {
-                    let parsed = parser
+                    let mut parsed = parser
                         .parse(ParserInput::from_bytes(
                             "benchmark.sas7bdat",
                             black_box(bytes.clone()),
                         ))
                         .expect("benchmark fixture should parse");
-                    black_box(parsed.metadata.row_count)
+                    let expected_row_count = parsed.metadata.row_count;
+                    let mut decoded_rows = 0_usize;
+
+                    while let Some(batch) = parsed
+                        .next_batch(BENCH_BATCH_SIZE_ROWS)
+                        .expect("benchmark fixture should stream batches")
+                    {
+                        decoded_rows += batch.rows.len();
+                    }
+
+                    assert_eq!(
+                        decoded_rows, expected_row_count,
+                        "benchmark fixture should drain the full streamed decode path"
+                    );
+                    black_box(decoded_rows)
                 });
             },
         );

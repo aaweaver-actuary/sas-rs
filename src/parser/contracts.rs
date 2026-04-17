@@ -71,8 +71,20 @@ impl<'a> ParserInput<'a> {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ColumnKind {
-    Numeric64,
+    Numeric,
     String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SemanticTypeHint {
+    Deferred,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct ColumnMetadata {
+    pub label: Option<String>,
+    pub format_name: Option<String>,
+    pub informat_name: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -81,23 +93,58 @@ pub struct SasColumn {
     pub kind: ColumnKind,
     pub offset: usize,
     pub width: usize,
+    pub semantic_type: SemanticTypeHint,
+    pub metadata: ColumnMetadata,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SasMetadata {
-    pub subset: SupportedSubset,
-    pub table_name: String,
-    pub file_label: String,
-    pub row_count: usize,
-    pub row_length: usize,
-    pub page_size: usize,
-    pub page_count: usize,
-    pub columns: Vec<SasColumn>,
+#[derive(Debug, Clone, PartialEq)]
+pub enum NumericValue {
+    Float64(f64),
+    DeferredBytes {
+        width_bytes: usize,
+        raw_bytes: Vec<u8>,
+    },
+}
+
+impl NumericValue {
+    pub fn deferred_bytes(raw_bytes: Vec<u8>) -> Self {
+        Self::DeferredBytes {
+            width_bytes: raw_bytes.len(),
+            raw_bytes,
+        }
+    }
+
+    pub fn as_f64(&self) -> Option<f64> {
+        match self {
+            Self::Float64(value) => Some(*value),
+            Self::DeferredBytes { .. } => None,
+        }
+    }
+
+    pub fn width_bytes(&self) -> usize {
+        match self {
+            Self::Float64(_) => 8,
+            Self::DeferredBytes { width_bytes, .. } => *width_bytes,
+        }
+    }
+
+    pub fn raw_bytes(&self) -> Option<&[u8]> {
+        match self {
+            Self::Float64(_) => None,
+            Self::DeferredBytes { raw_bytes, .. } => Some(raw_bytes.as_slice()),
+        }
+    }
+}
+
+impl From<f64> for NumericValue {
+    fn from(value: f64) -> Self {
+        Self::Float64(value)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ParsedValue {
-    Numeric(f64),
+    Numeric(NumericValue),
     String(String),
 }
 
@@ -110,6 +157,18 @@ pub struct ParsedRow {
 pub struct RowBatch {
     pub row_index_start: usize,
     pub rows: Vec<ParsedRow>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SasMetadata {
+    pub subset: SupportedSubset,
+    pub table_name: String,
+    pub file_label: String,
+    pub row_count: usize,
+    pub row_length: usize,
+    pub page_size: usize,
+    pub page_count: usize,
+    pub columns: Vec<SasColumn>,
 }
 
 pub struct ParsedSas7bdat {

@@ -13,7 +13,7 @@ use rayon::prelude::*;
 use rayon::{ThreadPool, ThreadPoolBuilder};
 
 use crate::parser::contracts::{
-    ColumnKind, ParsedRow, ParsedSas7bdat, ParsedValue, RowBatch, SasMetadata,
+    ColumnKind, NumericValue, ParsedRow, ParsedSas7bdat, ParsedValue, RowBatch, SasMetadata,
 };
 
 use super::contracts::{ExecutionModel, SinkFormat, TransformRequest};
@@ -357,7 +357,7 @@ impl ProjectionColumn {
         column: &crate::parser::contracts::SasColumn,
     ) -> Result<Self, TransformExecutionError> {
         let kind = match column.kind {
-            ColumnKind::Numeric64 => ProjectionKind::Float64,
+            ColumnKind::Numeric => ProjectionKind::Float64,
             ColumnKind::String => ProjectionKind::Utf8,
         };
         Ok(Self {
@@ -433,10 +433,16 @@ impl TypedColumn {
         column_name: &str,
     ) -> Result<(), TransformExecutionError> {
         match (self, value) {
-            (Self::Float64(values), ParsedValue::Numeric(value)) => {
+            (Self::Float64(values), ParsedValue::Numeric(NumericValue::Float64(value))) => {
                 values.push(*value);
                 Ok(())
             }
+            (
+                Self::Float64(_),
+                ParsedValue::Numeric(NumericValue::DeferredBytes { width_bytes, .. }),
+            ) => Err(TransformExecutionError::new(format!(
+                "column {column_name} is a {width_bytes}-byte numeric and numeric materialization is deferred"
+            ))),
             (Self::Utf8(values), ParsedValue::String(value)) => {
                 values.push(value.clone());
                 Ok(())
@@ -508,9 +514,17 @@ impl FilterPredicate {
             ))
         })?;
         match (&self.literal, value) {
-            (FilterLiteral::Numeric(expected), ParsedValue::Numeric(actual)) => {
-                Ok(self.operator.apply_numeric(*actual, *expected))
-            }
+            (
+                FilterLiteral::Numeric(expected),
+                ParsedValue::Numeric(NumericValue::Float64(actual)),
+            ) => Ok(self.operator.apply_numeric(*actual, *expected)),
+            (
+                FilterLiteral::Numeric(_),
+                ParsedValue::Numeric(NumericValue::DeferredBytes { width_bytes, .. }),
+            ) => Err(TransformExecutionError::new(format!(
+                "filter column {} is a {width_bytes}-byte numeric and numeric materialization is deferred",
+                self.column_name
+            ))),
             (FilterLiteral::Utf8(expected), ParsedValue::String(actual)) => self
                 .operator
                 .apply_string(actual, expected, &self.column_name),
@@ -599,7 +613,7 @@ impl FilterLiteral {
         operator: &FilterOperator,
     ) -> Result<Self, TransformExecutionError> {
         match column_kind {
-            ColumnKind::Numeric64 => token.parse::<f64>().map(Self::Numeric).map_err(|_| {
+            ColumnKind::Numeric => token.parse::<f64>().map(Self::Numeric).map_err(|_| {
                 TransformExecutionError::new(format!(
                     "filter literal {token} is not a valid numeric value for column {column_name}"
                 ))

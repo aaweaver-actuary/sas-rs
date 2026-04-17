@@ -1,7 +1,9 @@
 #[path = "support/minimal_sas_fixture.rs"]
 mod minimal_sas_fixture;
 
-use sas_rs::parser::contracts::{ColumnKind, ParsedValue, ParserInput};
+use sas_rs::parser::contracts::{
+    ColumnKind, ColumnMetadata, NumericValue, ParsedValue, ParserInput, SemanticTypeHint,
+};
 use sas_rs::parser::{Sas7bdatParser, SupportedSas7bdatParser};
 
 #[test]
@@ -22,13 +24,29 @@ fn parser_decodes_metadata_and_batches_from_the_supported_subset_fixture() {
     assert_eq!(parsed.metadata.page_count, 2);
     assert_eq!(parsed.metadata.columns.len(), 2);
     assert_eq!(parsed.metadata.columns[0].name, "customer_id");
-    assert_eq!(parsed.metadata.columns[0].kind, ColumnKind::Numeric64);
+    assert_eq!(parsed.metadata.columns[0].kind, ColumnKind::Numeric);
     assert_eq!(parsed.metadata.columns[0].offset, 0);
     assert_eq!(parsed.metadata.columns[0].width, 8);
+    assert_eq!(
+        parsed.metadata.columns[0].semantic_type,
+        SemanticTypeHint::Deferred
+    );
+    assert_eq!(
+        parsed.metadata.columns[0].metadata,
+        ColumnMetadata::default()
+    );
     assert_eq!(parsed.metadata.columns[1].name, "code");
     assert_eq!(parsed.metadata.columns[1].kind, ColumnKind::String);
     assert_eq!(parsed.metadata.columns[1].offset, 8);
     assert_eq!(parsed.metadata.columns[1].width, 4);
+    assert_eq!(
+        parsed.metadata.columns[1].semantic_type,
+        SemanticTypeHint::Deferred
+    );
+    assert_eq!(
+        parsed.metadata.columns[1].metadata,
+        ColumnMetadata::default()
+    );
 
     let first_batch = parsed
         .next_batch(2)
@@ -39,14 +57,14 @@ fn parser_decodes_metadata_and_batches_from_the_supported_subset_fixture() {
     assert_eq!(
         first_batch.rows[0].values,
         vec![
-            ParsedValue::Numeric(1.0),
+            ParsedValue::Numeric(1.0.into()),
             ParsedValue::String("ABCD".to_string()),
         ]
     );
     assert_eq!(
         first_batch.rows[1].values,
         vec![
-            ParsedValue::Numeric(2.5),
+            ParsedValue::Numeric(2.5.into()),
             ParsedValue::String("EFGH".to_string()),
         ]
     );
@@ -60,7 +78,7 @@ fn parser_decodes_metadata_and_batches_from_the_supported_subset_fixture() {
     assert_eq!(
         second_batch.rows[0].values,
         vec![
-            ParsedValue::Numeric(3.0),
+            ParsedValue::Numeric(3.0.into()),
             ParsedValue::String("IJKL".to_string()),
         ]
     );
@@ -146,5 +164,51 @@ fn parser_defers_multi_page_row_reads_until_batches_are_requested() {
         monitor.bytes_read() <= first_batch_budget,
         "expected the first batch to avoid whole-dataset materialization; budget {first_batch_budget}, read {}",
         monitor.bytes_read()
+    );
+}
+
+#[test]
+fn parser_preserves_non_8_byte_numeric_cells_without_parser_core_rejection() {
+    let mut definition = minimal_sas_fixture::supported_fixture_definition();
+    definition.columns = vec![
+        minimal_sas_fixture::FixtureColumn::Numeric {
+            name: "narrow_numeric".to_string(),
+            width: 4,
+        },
+        minimal_sas_fixture::FixtureColumn::String {
+            name: "code".to_string(),
+            width: 4,
+        },
+    ];
+    definition.rows = vec![vec![
+        minimal_sas_fixture::FixtureValue::NumericBytes(vec![0x78, 0x56, 0x34, 0x12]),
+        minimal_sas_fixture::FixtureValue::String("ABCD".to_string()),
+    ]];
+
+    let parser = SupportedSas7bdatParser;
+    let mut parsed = parser
+        .parse(ParserInput::from_bytes(
+            "narrow-numeric.sas7bdat",
+            minimal_sas_fixture::build_fixture(&definition),
+        ))
+        .expect("supported uncompressed fixture should parse with a narrow numeric column");
+
+    assert_eq!(parsed.metadata.columns[0].kind, ColumnKind::Numeric);
+    assert_eq!(parsed.metadata.columns[0].width, 4);
+    assert_eq!(
+        parsed.metadata.columns[0].semantic_type,
+        SemanticTypeHint::Deferred
+    );
+
+    let batch = parsed
+        .next_batch(1)
+        .expect("batch decoding should succeed")
+        .expect("expected one row");
+    assert_eq!(
+        batch.rows[0].values,
+        vec![
+            ParsedValue::Numeric(NumericValue::deferred_bytes(vec![0x78, 0x56, 0x34, 0x12])),
+            ParsedValue::String("ABCD".to_string()),
+        ]
     );
 }

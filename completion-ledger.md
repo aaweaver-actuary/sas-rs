@@ -1,88 +1,100 @@
 # Completion Ledger
 
-- pr_scope_id: performance_push_and_completion
+- pr_scope_id: capability_contracts_numeric_widths_and_honest_harness
 - authoritative_spec: spec.md
 - authoritative_request_plan: request-plan.md
-- ledger_baseline_note: Fresh active ledger created on 2026-04-17 because the old typed_transform_and_memory_scaling ledger was not the active completion artifact for the materially new final performance rerun on the streaming architecture.
-- pr_scope_state: complete
-- outcome_status: complete
+- ledger_baseline_note: Fresh active ledger created on 2026-04-17 because the previous performance_push_and_completion ledger was complete for a materially different, subset-complete PR scope and is not authoritative after the full-spec rebaseline.
+- pr_scope_state: pr_review
+- outcome_status: in_progress
 
 ## PR Scope Summary
 
-- objective: Re-establish benchmark and validation evidence on the true streaming architecture, tune only if the lazy path regresses materially, and refresh final completion evidence.
-- issue_delta_status: clean
-- issue_delta_evidence: Repo-qualified query repo:aaweaver-actuary/sas-rs is:issue is:open returned 0 open issues on 2026-04-17 at both scope start and final sync.
-- planning_status: No tuning was required. The streaming baseline stayed reviewable and the final completion case now rests on fresh end-to-end transform throughput plus the passing validation suite.
+- objective: Replace subset-specific parser and transform contracts with matrix-capable physical and semantic schema interfaces, preserve the current supported subset through those new contracts, remove the hard 8-byte numeric assumption, and make parser benchmarking drain streamed batches instead of timing parse setup only.
+- issue_membership: spec.md requirements 6, 7, and 19
+- issue_delta_status: open_issue_tracked_non_blocking
+- issue_delta_evidence: GitHub issue #1 requests using the sample-sas-datasets directory for performance and feature fixtures. It remains request-relevant but non-blocking for this bounded scope because the active PR scope still must stay honest about the current narrow parser subset and the bounded package does not broaden format support.
+- planning_status: The bounded implementation slice was executed successfully. All slice acceptance gates are now satisfied, and the active PR scope is ready for PR review rather than additional implementation slicing.
 
 ## State Transitions
 
 1. 2026-04-17: intake -> pr_scope_defined
-   - reason: performance_push_and_completion is materially new relative to the stale blocked performance ledger and the completed typed-transform ledger, so the active ledger had to be replaced.
+   - reason: request-plan.md rebaselined the request against the full authoritative spec and the existing completion-ledger.md described a different completed PR scope.
 2. 2026-04-17: pr_scope_defined -> slice_ready
-   - reason: request-plan.md confirms the active PR scope and repo-qualified issue sync is clean.
+   - reason: Confirmed the active PR scope, bounded package, included requirements, and deferred non-goals.
 3. 2026-04-17: slice_ready -> slice_in_progress
-   - reason: Started the streaming_baseline_bench_and_validation slice.
+   - reason: Started the contract_gap_and_harness_assessment slice to evaluate the bounded package against the current repository state.
 4. 2026-04-17: slice_in_progress -> slice_review
-   - reason: Full validation and benchmark reruns completed on the streaming baseline and no material regression required tuning.
+   - reason: Completed bounded-file review plus the required scoped cargo commands.
 5. 2026-04-17: slice_review -> awaiting_issue_sync
-   - reason: Re-ran repo-qualified issue sync at the PR-scope cycle boundary after the benchmark and validation slice.
-6. 2026-04-17: awaiting_issue_sync -> pr_review
-   - reason: Final issue sync stayed clean and the completion gates are satisfied with honest benchmark-backed evidence.
-7. 2026-04-17: pr_review -> complete
-   - reason: End-to-end transform throughput, supported-boundary validation, and final issue sync are sufficient for Request Manager review.
+   - reason: Assessment evidence was gathered and repo-qualified issue sync was re-run at the slice boundary.
+6. 2026-04-17: awaiting_issue_sync -> slice_ready
+   - reason: Open issue #1 is tracked for later request validation work but does not block the next bounded implementation slice for this PR scope.
+7. 2026-04-17: slice_ready -> slice_in_progress
+   - reason: Started the matrix_capable_contracts_numeric_widths_and_streamed_decode_benchmark implementation slice.
+8. 2026-04-17: slice_in_progress -> slice_review
+   - reason: Landed the bounded implementation changes, refreshed the scoped docs, and passed the required cargo test, cargo bench, and cargo fmt --check validations.
+9. 2026-04-17: slice_review -> awaiting_issue_sync
+   - reason: Re-ran issue sync at the slice boundary after the implementation evidence was gathered.
+10. 2026-04-17: awaiting_issue_sync -> pr_review
+    - reason: Acceptance gates 1 through 6 are now satisfied for the active PR scope, so the next required step is PR review rather than another implementation slice.
 
 ## Slice Execution Evidence
 
-1. scope_rebaseline_and_issue_sync
+1. scope_rebaseline_and_assessment
    - status: complete
    - lane: backend
-   - evidence: Confirmed origin is https://github.com/aaweaver-actuary/sas-rs.git, replaced the stale active ledger, and verified repo-qualified issue sync returned 0 open issues.
-2. streaming_baseline_bench_and_validation
+   - evidence: Replaced the stale active ledger, verified the active PR scope from request-plan.md, reviewed only the bounded package files, and gathered required command evidence.
+2. contract_gap_and_harness_assessment
    - status: complete
    - lane: backend
-   - evidence: cargo test passed 19 tests; assumption_probe rerun measured 21.903 to 21.978 microseconds at 16,384 rows and 178.11 to 183.46 microseconds at 131,072 rows; parser_decode rerun completed but currently measures parse() without next_batch and therefore reflects metadata-parse cost more than full row decode on the streaming path; transform_write rerun on 262,144 rows measured 36.231 to 41.713 ms at 1 thread and 33.720 to 34.217 ms at 4 threads, corresponding to 6.284 to 7.235 Melem/s and 7.661 to 7.774 Melem/s respectively.
+   - evidence: The parser and transform surfaces were still subset-shaped around Numeric64/String, the parser rejected numeric widths other than 8 bytes, and benches/parser_decode.rs benchmarked parse() without draining streamed batches.
+3. matrix_capable_contracts_numeric_widths_and_streamed_decode_benchmark
+   - status: complete
+   - lane: backend
+   - evidence: Generalized parser columns to a physical numeric/string contract with deferred semantic hints and richer column metadata, removed the parser-core width==8 rejection in favor of preserving non-8-byte numeric cells as deferred raw bytes, threaded the new contract through transform planning and explicit deferred-materialization errors, extended the synthetic fixture/test surface to exercise a 4-byte numeric path honestly, and updated benches/parser_decode.rs to drain next_batch() fully before reporting throughput.
+
+## Next Slice
+
+- selected_slice: none
+- lane: none
+- objective: Await PR review for the active PR scope because the bounded implementation acceptance criteria are satisfied.
+- escalation_watch: If PR review determines that the deferred non-8-byte numeric materialization boundary is too narrow for requirement 19, escalate that as scope delta instead of silently claiming broader SAS numeric semantics.
 
 ## Completion Gate Status
 
-1. End-to-end transform benchmarks exist on the streaming architecture and are strong enough for final review.
+1. Parser contracts can represent physical numeric width and richer metadata without assuming only the current narrow value kinds.
    - status: pass
-   - evidence: transform_write on the streaming baseline sustained 7.661 to 7.774 Melem/s at 262,144 rows with 4 worker threads in the longer rerun.
-2. Performance-oriented structure remains justified on the new path.
+   - evidence: src/parser/contracts.rs now exposes physical `ColumnKind::Numeric` and `ColumnKind::String`, deferred semantic hints, optional format/informat/label metadata slots, and parsed numeric cells can be either materialized `Float64` or deferred raw bytes.
+2. Transform contracts and sink planning compile against the new schema surface without hard-coding future SAS semantic policy prematurely.
    - status: pass
-   - evidence: The assumption probe remains cheap, end-to-end transform throughput remains strong, and the short-window matrix rerun did not reveal a material regression that justified reopening implementation work.
-3. The supported-subset CLI transform path remains production-ready within its explicit support boundary.
+   - evidence: src/transform/sink.rs plans projections from the generalized parser schema, keeps the current Float64 fallback only for materialized numeric cells, and fails explicitly when a deferred-width numeric cell would otherwise force premature semantic policy.
+3. The current supported subset still works end-to-end through the new contract surfaces.
    - status: pass
-   - evidence: cargo test passed the CLI contract, parser contract, parser decode contract, transform contract, and transform parser integration suites on the streaming baseline.
-4. Remaining unsupported areas remain explicit.
+   - evidence: The scoped parser and transform integration tests still pass on the existing supported subset, including selection, filtering, batching, bounded-memory writes, and parallel batch execution.
+4. Non-8-byte numeric widths are decoded or at least explicitly exercised through the supported uncompressed path with tests, removing the hard assumption from the parser core.
    - status: pass
-   - evidence: Unsupported parser subset cases and unsupported filter-expression forms remain explicit in the current code and tests.
-5. Validation evidence is sufficient for Request Manager to complete the request if no other gaps remain.
+   - evidence: The parser no longer rejects widths below 8 bytes during schema parsing, tests exercise a 4-byte numeric column through the uncompressed path, and the transform path reports deferred materialization explicitly instead of hiding the boundary.
+5. The parser benchmark drains streamed batches with next_batch instead of only timing parse setup.
    - status: pass
-   - evidence: Full suite pass, final issue sync clean, and fresh benchmark evidence now exist on the true streaming baseline.
-6. The < 1 minute for ~20M rows target has an honest benchmark-backed case on the supported-subset streaming workload.
+   - evidence: benches/parser_decode.rs now parses the fixture, drains next_batch() to exhaustion, asserts the decoded row count, and the required benchmark command completed successfully on that streamed decode path.
+6. This PR does not claim new 32-bit, big-endian, non-UTF-8, compression, page-type, or SAS semantic typing support.
    - status: pass
-   - evidence: 20 million rows at 7.661 to 7.774 Melem/s implies about 2.61 to 2.57 seconds under the supported-subset transform_write benchmark conditions; this is an honest synthetic supported-boundary case, not a claim about arbitrary unsupported SAS inputs.
+   - evidence: The parser and transform READMEs now state that non-8-byte numeric cells are preserved with deferred semantics rather than claimed as fully typed support, and the unsupported layout/encoding/compression/page-type boundaries remain explicit.
 
 ## Command Evidence
 
-1. cargo test
+1. cargo test --test parser_contract --test transform_contract --test transform_parser_integration --test parser_decode_contract
    - result: pass
-   - details: 19 tests passed across the CLI, parser, transform, and integration suites.
-2. cargo bench --bench assumption_probe -- --noplot --sample-size 15 --measurement-time 0.5 --warm-up-time 0.2
+   - details: 17 scoped tests passed after the bounded implementation changes.
+2. cargo bench --bench parser_decode -- --noplot --sample-size 10 --measurement-time 0.2 --warm-up-time 0.1
    - result: pass
-   - details: 16,384 rows at about 21.9 microseconds and 131,072 rows at about 180.9 microseconds.
-3. cargo bench --bench parser_decode -- --noplot --sample-size 15 --measurement-time 0.5 --warm-up-time 0.2
-   - result: pass_with_caveat
-   - details: Benchmark reran successfully, but the harness currently calls parse() without next_batch and should be interpreted as metadata-parse timing rather than full streaming row decode timing.
-4. cargo bench --bench transform_write -- --noplot --sample-size 15 --measurement-time 0.5 --warm-up-time 0.2
+   - details: The benchmark now drains streamed batches fully. Observed timings were about 882 to 892 microseconds at 16,384 rows, 7.09 to 7.27 milliseconds at 131,072 rows, and 14.12 to 14.30 milliseconds at 262,144 rows, with throughput around 18.0 to 18.6 million rows per second on the synthetic supported-subset fixture. Criterion reported a large regression versus the prior baseline because the harness now measures real streamed decode rather than parse-entry timing.
+3. cargo fmt --check
    - result: pass
-   - details: Full matrix rerun remained in the 6.7 to 7.5 Melem/s range and did not indicate a material regression requiring tuning.
-5. cargo bench --bench transform_write 262144 -- --noplot --sample-size 20 --measurement-time 1 --warm-up-time 0.3
-   - result: pass
-   - details: Targeted high-row-count rerun tightened the main completion evidence to 7.661 to 7.774 Melem/s at 4 worker threads.
-6. github issue sync
-   - result: pass
-   - details: repo:aaweaver-actuary/sas-rs is:issue is:open returned 0 open issues at final sync.
+   - details: rustfmt produced no output after formatting the bounded changes.
+4. github issue sync
+   - result: open_issue_non_blocking
+   - details: repo:aaweaver-actuary/sas-rs is:issue is:open still returns only issue #1, SAS Sample Datasets. It remains relevant to later corpus-backed validation work but does not change this PR scope's bounded acceptance criteria.
 
 ## Blockers And Waivers
 
@@ -91,6 +103,6 @@
 
 ## Upward Report
 
-- active_pr_scope_status: complete
-- request_completion_signal: Request Manager can now credibly review the full request for completion if no other request-level gaps remain.
-- residual_note: The parser_decode benchmark should be refined later if the project wants a stage-specific streaming row-decode microbenchmark, but it is not blocking honest request completion because the end-to-end transform evidence is now strong and current.
+- active_pr_scope_status: in_progress
+- request_completion_signal: not ready
+- residual_note: The implementation slice is complete and the active PR scope is ready for PR review. Do not mark the PR scope complete until the PR review step clears, but no additional implementation slice is currently required inside this bounded package.

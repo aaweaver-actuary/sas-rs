@@ -17,8 +17,10 @@ The transform layer handles:
 
 The supported subset currently maps into Parquet as:
 
-- parser `Numeric64` -> Arrow `Float64` -> Parquet floating-point column
+- parser physical numeric columns currently fall back to Arrow `Float64` only when the decoded cell materializes as an 8-byte numeric value
 - parser `String` -> Arrow `Utf8` -> Parquet string column
+
+Non-8-byte numeric cells now flow through the parser contract, but the transform layer still treats their final materialization policy as deferred and fails explicitly if a batch tries to coerce them today.
 
 This is intentionally narrow. The transform layer does not yet interpret SAS formats or semantic numeric types.
 
@@ -34,7 +36,7 @@ Filter expressions:
 
 - exactly one predicate only
 - token shape must be `column operator literal`
-- numeric columns support `=`, `!=`, `>`, `>=`, `<`, `<=`
+- numeric columns support `=`, `!=`, `>`, `>=`, `<`, `<=` when the parsed cell is materialized as the current 8-byte numeric subset
 - string columns support `=` and `!=`
 - compound expressions such as `AND` / `OR` are rejected explicitly
 
@@ -69,6 +71,7 @@ This module does not yet provide:
 - SAS date/time/datetime semantics
 - SAS special missing-value preservation
 - format-driven typing beyond the current numeric/string mapping
+- materialization rules for deferred non-8-byte numeric cells
 - alternative sink targets besides the current Parquet path
 
 ## What Full Transform Coverage Would Require

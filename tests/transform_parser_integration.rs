@@ -19,7 +19,7 @@ use sas_rs::transform::pipeline::{
 };
 use sas_rs::transform::sink::{
     LocalParquetSink, ParquetSink, ParquetSinkError, ParquetSinkPlan, ParquetSinkReport,
-    ParquetSinkStatus, StreamingParquetSink, TransformExecution,
+    ParquetSinkStatus, StreamingParquetSink, StubParquetSink, TransformExecution,
 };
 
 #[derive(Debug)]
@@ -134,6 +134,40 @@ fn parser_transform_service_rejects_unsupported_filter_expressions() {
         .expect_err("unsupported filter expressions should stay explicit");
     assert!(
         error.to_string().contains("unsupported filter expression"),
+        "unexpected error: {error}"
+    );
+}
+
+#[test]
+fn parser_transform_service_rejects_deferred_non_8_byte_numeric_materialization() {
+    let mut definition = minimal_sas_fixture::supported_fixture_definition();
+    definition.columns = vec![
+        minimal_sas_fixture::FixtureColumn::Numeric {
+            name: "measure".to_string(),
+            width: 4,
+        },
+        minimal_sas_fixture::FixtureColumn::String {
+            name: "code".to_string(),
+            width: 4,
+        },
+    ];
+    definition.rows = vec![vec![
+        minimal_sas_fixture::FixtureValue::NumericBytes(vec![0x78, 0x56, 0x34, 0x12]),
+        minimal_sas_fixture::FixtureValue::String("ABCD".to_string()),
+    ]];
+
+    let loader = InMemorySourceLoader {
+        bytes: minimal_sas_fixture::build_fixture(&definition),
+    };
+    let service = ParserTransformService::new(loader, SupportedSas7bdatParser, StubParquetSink);
+    let error = service
+        .run(deferred_numeric_request())
+        .expect_err("deferred numeric materialization should stay explicit");
+
+    assert!(
+        error
+            .to_string()
+            .contains("numeric materialization is deferred"),
         "unexpected error: {error}"
     );
 }
@@ -279,6 +313,31 @@ fn unsupported_filter_request() -> TransformRequest {
         },
         sink: SinkContract {
             path: minimal_sas_fixture::unique_tmp_path("transform-unsupported-filter", "parquet"),
+            format: SinkFormat::Parquet,
+        },
+    }
+}
+
+fn deferred_numeric_request() -> TransformRequest {
+    TransformRequest {
+        source: SourceContract {
+            path: "fixtures/deferred-numeric.sas7bdat".into(),
+            format: SourceFormat::Sas7bdat,
+        },
+        decoder: DecoderContract {
+            mode: DecodeMode::StreamingPages,
+        },
+        transform: TransformContract {
+            selection: Vec::new(),
+            filter: None,
+            execution: ExecutionModel::Streaming,
+            tuning: TransformTuning {
+                batch_size_rows: 8,
+                worker_threads: Some(1),
+            },
+        },
+        sink: SinkContract {
+            path: "fixtures/deferred-numeric.parquet".into(),
             format: SinkFormat::Parquet,
         },
     }

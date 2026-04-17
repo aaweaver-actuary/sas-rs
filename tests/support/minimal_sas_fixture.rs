@@ -45,13 +45,14 @@ pub struct FixtureDefinition {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum FixtureColumn {
-    Numeric { name: String },
+    Numeric { name: String, width: usize },
     String { name: String, width: usize },
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum FixtureValue {
     Numeric(f64),
+    NumericBytes(Vec<u8>),
     String(String),
 }
 
@@ -112,6 +113,7 @@ pub fn supported_fixture_definition() -> FixtureDefinition {
         columns: vec![
             FixtureColumn::Numeric {
                 name: "customer_id".to_string(),
+                width: 8,
             },
             FixtureColumn::String {
                 name: "code".to_string(),
@@ -261,7 +263,7 @@ pub fn build_fixture(definition: &FixtureDefinition) -> Vec<u8> {
 impl FixtureColumn {
     pub fn name(&self) -> &str {
         match self {
-            Self::Numeric { name } | Self::String { name, .. } => name,
+            Self::Numeric { name, .. } | Self::String { name, .. } => name,
         }
     }
 }
@@ -433,9 +435,22 @@ fn write_row(bytes: &mut [u8], row: &[FixtureValue], columns: &[FixtureColumn]) 
     let mut offset = 0;
     for (value, column) in row.iter().zip(columns.iter()) {
         match (value, column) {
-            (FixtureValue::Numeric(number), FixtureColumn::Numeric { .. }) => {
+            (FixtureValue::Numeric(number), FixtureColumn::Numeric { width, .. }) => {
+                assert_eq!(
+                    *width, 8,
+                    "FixtureValue::Numeric only supports 8-byte numeric columns"
+                );
                 bytes[offset..offset + 8].copy_from_slice(&number.to_le_bytes());
                 offset += 8;
+            }
+            (FixtureValue::NumericBytes(raw_bytes), FixtureColumn::Numeric { width, .. }) => {
+                assert_eq!(
+                    raw_bytes.len(),
+                    *width,
+                    "numeric byte payload must match the declared column width"
+                );
+                bytes[offset..offset + *width].copy_from_slice(raw_bytes);
+                offset += *width;
             }
             (FixtureValue::String(value), FixtureColumn::String { width, .. }) => {
                 let value_bytes = value.as_bytes();
@@ -471,7 +486,7 @@ fn append_text(blob: &mut Vec<u8>, value: &str) -> TextRef {
 
 fn column_width(column: &FixtureColumn) -> usize {
     match column {
-        FixtureColumn::Numeric { .. } => 8,
+        FixtureColumn::Numeric { width, .. } => *width,
         FixtureColumn::String { width, .. } => *width,
     }
 }

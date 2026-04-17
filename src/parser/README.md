@@ -30,8 +30,10 @@ That means:
   - column attributes
   - column format header shape only
 - column kinds:
-  - 8-byte numeric values
+  - physical numeric columns with widths from 1 through 8 bytes
   - fixed-width string values
+
+8-byte numeric values currently materialize as `f64`. Narrower numeric widths are preserved as deferred raw bytes until a later semantic-typing scope decides how they should be interpreted.
 
 ## Streaming Behavior
 
@@ -57,7 +59,8 @@ The parser currently rejects or does not implement:
 - row compression, binary compression, or unknown compression modes
 - page types outside the handled subset
 - subheader signatures outside the handled subset
-- numeric widths other than 8 bytes
+- numeric widths greater than 8 bytes
+- semantic materialization of non-8-byte numeric widths
 - column type codes outside numeric and string
 
 It also does not yet expose richer SAS semantics such as:
