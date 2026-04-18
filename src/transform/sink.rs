@@ -16,8 +16,8 @@ use rayon::prelude::*;
 use rayon::{ThreadPool, ThreadPoolBuilder};
 
 use crate::parser::contracts::{
-    ColumnKind, NumericValue, ParsedRow, ParsedSas7bdat, ParsedValue, RowBatch, SasColumn,
-    SasMetadata, SasMissingTag, SemanticTypeHint,
+    ColumnKind, Endianness, NumericValue, ParsedRow, ParsedSas7bdat, ParsedValue, RowBatch,
+    SasColumn, SasMetadata, SasMissingTag, SemanticTypeHint,
 };
 
 use super::contracts::{ExecutionModel, SinkFormat, TransformRequest};
@@ -167,6 +167,7 @@ pub struct TransformExecution {
     filter: Option<FilterPredicate>,
     selection_applied: bool,
     parallelism: BatchParallelism,
+    source_endianness: Endianness,
 }
 
 impl TransformExecution {
@@ -220,6 +221,7 @@ impl TransformExecution {
             filter,
             selection_applied: !request.transform.selection.is_empty(),
             parallelism: BatchParallelism::from_request(request),
+            source_endianness: metadata.subset.endianness,
         })
     }
 
@@ -301,7 +303,7 @@ impl TransformExecution {
                         projected.name
                     ))
                 })?;
-                typed.push(value, &projected.name)?;
+                typed.push(value, &projected.name, self.source_endianness)?;
             }
             row_count += 1;
         }
@@ -547,26 +549,27 @@ impl TypedColumn {
         &mut self,
         value: &ParsedValue,
         column_name: &str,
+        endianness: Endianness,
     ) -> Result<(), TransformExecutionError> {
         match (self, value) {
             (Self::Float64(values), ParsedValue::Numeric(numeric)) => {
-                values.push(materialized_float64(numeric, column_name)?);
+                values.push(materialized_float64(numeric, column_name, endianness)?);
                 Ok(())
             }
             (Self::Date32(values), ParsedValue::Numeric(numeric)) => {
-                values.push(materialized_date32(numeric, column_name)?);
+                values.push(materialized_date32(numeric, column_name, endianness)?);
                 Ok(())
             }
             (Self::Time64Microsecond(values), ParsedValue::Numeric(numeric)) => {
-                values.push(materialized_time64_micros(numeric, column_name)?);
+                values.push(materialized_time64_micros(numeric, column_name, endianness)?);
                 Ok(())
             }
             (Self::TimestampMicrosecond(values), ParsedValue::Numeric(numeric)) => {
-                values.push(materialized_timestamp_micros(numeric, column_name)?);
+                values.push(materialized_timestamp_micros(numeric, column_name, endianness)?);
                 Ok(())
             }
             (Self::DurationMicrosecond(values), ParsedValue::Numeric(numeric)) => {
-                values.push(materialized_duration_micros(numeric, column_name)?);
+                values.push(materialized_duration_micros(numeric, column_name, endianness)?);
                 Ok(())
             }
             (Self::Utf8(values), ParsedValue::String(value)) => {
@@ -574,7 +577,8 @@ impl TypedColumn {
                 Ok(())
             }
             (Self::Utf8(values), ParsedValue::Numeric(numeric)) => {
-                values.push(numeric.missing_tag().map(|tag| tag.code().to_string()));
+                let (_, missing_tag) = materialized_numeric_parts(numeric, column_name, endianness)?;
+                values.push(missing_tag.map(|tag| tag.code().to_string()));
                 Ok(())
             }
             (_, ParsedValue::String(_)) => Err(TransformExecutionError::new(format!(
@@ -613,8 +617,9 @@ const SECONDS_PER_DAY: f64 = 86_400.0;
 fn materialized_float64(
     numeric: &NumericValue,
     column_name: &str,
+    endianness: Endianness,
 ) -> Result<Option<f64>, TransformExecutionError> {
-    let (value, missing_tag) = materialized_numeric_parts(numeric, column_name)?;
+    let (value, missing_tag) = materialized_numeric_parts(numeric, column_name, endianness)?;
     Ok(if missing_tag.is_some() {
         None
     } else {
@@ -625,8 +630,9 @@ fn materialized_float64(
 fn materialized_date32(
     numeric: &NumericValue,
     column_name: &str,
+    endianness: Endianness,
 ) -> Result<Option<i32>, TransformExecutionError> {
-    let (value, missing_tag) = materialized_numeric_parts(numeric, column_name)?;
+    let (value, missing_tag) = materialized_numeric_parts(numeric, column_name, endianness)?;
     if missing_tag.is_some() {
         return Ok(None);
     }
@@ -639,8 +645,9 @@ fn materialized_date32(
 fn materialized_time64_micros(
     numeric: &NumericValue,
     column_name: &str,
+    endianness: Endianness,
 ) -> Result<Option<i64>, TransformExecutionError> {
-    let (value, missing_tag) = materialized_numeric_parts(numeric, column_name)?;
+    let (value, missing_tag) = materialized_numeric_parts(numeric, column_name, endianness)?;
     if missing_tag.is_some() {
         return Ok(None);
     }
@@ -650,8 +657,9 @@ fn materialized_time64_micros(
 fn materialized_timestamp_micros(
     numeric: &NumericValue,
     column_name: &str,
+    endianness: Endianness,
 ) -> Result<Option<i64>, TransformExecutionError> {
-    let (value, missing_tag) = materialized_numeric_parts(numeric, column_name)?;
+    let (value, missing_tag) = materialized_numeric_parts(numeric, column_name, endianness)?;
     if missing_tag.is_some() {
         return Ok(None);
     }
@@ -664,8 +672,9 @@ fn materialized_timestamp_micros(
 fn materialized_duration_micros(
     numeric: &NumericValue,
     column_name: &str,
+    endianness: Endianness,
 ) -> Result<Option<i64>, TransformExecutionError> {
-    let (value, missing_tag) = materialized_numeric_parts(numeric, column_name)?;
+    let (value, missing_tag) = materialized_numeric_parts(numeric, column_name, endianness)?;
     if missing_tag.is_some() {
         return Ok(None);
     }
@@ -675,16 +684,62 @@ fn materialized_duration_micros(
 fn materialized_numeric_parts(
     numeric: &NumericValue,
     column_name: &str,
+    endianness: Endianness,
 ) -> Result<(f64, Option<SasMissingTag>), TransformExecutionError> {
     match numeric {
         NumericValue::Float64 {
             value, missing_tag, ..
         } => Ok((*value, *missing_tag)),
-        NumericValue::DeferredBytes { width_bytes, .. } => {
-            Err(TransformExecutionError::new(format!(
-                "column {column_name} is a {width_bytes}-byte numeric and numeric materialization is deferred"
-            )))
+        NumericValue::DeferredBytes {
+            width_bytes,
+            raw_bytes,
+        } => decode_deferred_numeric(raw_bytes, *width_bytes, endianness, column_name),
+    }
+}
+
+fn decode_deferred_numeric(
+    raw_bytes: &[u8],
+    width_bytes: usize,
+    endianness: Endianness,
+    column_name: &str,
+) -> Result<(f64, Option<SasMissingTag>), TransformExecutionError> {
+    if raw_bytes.len() != width_bytes || !(1..=7).contains(&width_bytes) {
+        return Err(TransformExecutionError::new(format!(
+            "column {column_name} has an invalid deferred numeric width of {width_bytes} bytes"
+        )));
+    }
+
+    let mut raw_bits = 0_u64;
+    match endianness {
+        Endianness::Little => {
+            for byte in raw_bytes.iter().rev() {
+                raw_bits = (raw_bits << 8) | u64::from(*byte);
+            }
         }
+        Endianness::Big => {
+            for byte in raw_bytes {
+                raw_bits = (raw_bits << 8) | u64::from(*byte);
+            }
+        }
+    }
+    raw_bits <<= (8 - width_bytes) * 8;
+
+    let value = f64::from_bits(raw_bits);
+    Ok((value, decode_materialized_missing_tag(value, raw_bits)))
+}
+
+fn decode_materialized_missing_tag(value: f64, raw_bits: u64) -> Option<SasMissingTag> {
+    if !value.is_nan() {
+        return None;
+    }
+
+    let tag = !((raw_bits >> 40) & 0xFF) as u8;
+    match tag {
+        0 => Some(SasMissingTag::Underscore),
+        2..=27 => Some(SasMissingTag::Letter((b'A' + (tag - 2)) as char)),
+        b'_' => Some(SasMissingTag::Underscore),
+        b'A'..=b'Z' => Some(SasMissingTag::Letter(tag as char)),
+        _ => Some(SasMissingTag::Dot),
     }
 }
 
@@ -704,6 +759,7 @@ struct FilterPredicate {
     column_name: String,
     operator: FilterOperator,
     literal: FilterLiteral,
+    source_endianness: Endianness,
 }
 
 impl FilterPredicate {
@@ -732,6 +788,7 @@ impl FilterPredicate {
             column_name: column_name.to_string(),
             operator,
             literal,
+            source_endianness: metadata.subset.endianness,
         })
     }
 
@@ -743,17 +800,14 @@ impl FilterPredicate {
             ))
         })?;
         match (&self.literal, value) {
-            (
-                FilterLiteral::Numeric(expected),
-                ParsedValue::Numeric(NumericValue::Float64 { value: actual, .. }),
-            ) => Ok(self.operator.apply_numeric(*actual, *expected)),
-            (
-                FilterLiteral::Numeric(_),
-                ParsedValue::Numeric(NumericValue::DeferredBytes { width_bytes, .. }),
-            ) => Err(TransformExecutionError::new(format!(
-                "filter column {} is a {width_bytes}-byte numeric and numeric materialization is deferred",
-                self.column_name
-            ))),
+            (FilterLiteral::Numeric(expected), ParsedValue::Numeric(numeric)) => {
+                let (actual, _) = materialized_numeric_parts(
+                    numeric,
+                    &self.column_name,
+                    self.source_endianness,
+                )?;
+                Ok(self.operator.apply_numeric(actual, *expected))
+            }
             (FilterLiteral::Utf8(expected), ParsedValue::String(actual)) => self
                 .operator
                 .apply_string(actual, expected, &self.column_name),

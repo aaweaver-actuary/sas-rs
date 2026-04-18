@@ -13,6 +13,7 @@ use arrow_array::{
 };
 use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 
+use sas_rs::parser::contracts::Endianness;
 use sas_rs::parser::{BoxedParserDataSource, SupportedSas7bdatParser};
 use sas_rs::transform::contracts::{
     DecodeMode, DecoderContract, ExecutionModel, SinkContract, SinkFormat, SourceContract,
@@ -24,7 +25,7 @@ use sas_rs::transform::pipeline::{
 };
 use sas_rs::transform::sink::{
     LocalParquetSink, ParquetSink, ParquetSinkError, ParquetSinkPlan, ParquetSinkReport,
-    ParquetSinkStatus, StreamingParquetSink, StubParquetSink, TransformExecution,
+    ParquetSinkStatus, StreamingParquetSink, TransformExecution,
 };
 
 #[derive(Debug)]
@@ -151,8 +152,12 @@ fn parser_transform_service_rejects_unsupported_filter_expressions() {
 }
 
 #[test]
-fn parser_transform_service_rejects_deferred_non_8_byte_numeric_materialization() {
+fn parser_transform_service_materializes_non_8_byte_numeric_columns_with_filtering() {
+    let output_path =
+        minimal_sas_fixture::unique_tmp_path("transform-narrow-numeric-filtered", "parquet");
+    let layout = minimal_sas_fixture::FixtureLayout::bit64_little();
     let mut definition = minimal_sas_fixture::supported_fixture_definition();
+    definition.layout = layout;
     definition.columns = vec![
         minimal_sas_fixture::FixtureColumn::Numeric {
             name: "measure".to_string(),
@@ -163,25 +168,83 @@ fn parser_transform_service_rejects_deferred_non_8_byte_numeric_materialization(
             width: 4,
         },
     ];
-    definition.rows = vec![vec![
-        minimal_sas_fixture::FixtureValue::NumericBytes(vec![0x78, 0x56, 0x34, 0x12]),
-        minimal_sas_fixture::FixtureValue::String("ABCD".to_string()),
-    ]];
+    definition.rows = vec![
+        vec![
+            minimal_sas_fixture::FixtureValue::NumericBytes(truncated_numeric_bytes(
+                layout, 42.5, 4,
+            )),
+            minimal_sas_fixture::FixtureValue::String("ABCD".to_string()),
+        ],
+        vec![
+            minimal_sas_fixture::FixtureValue::NumericBytes(truncated_numeric_bytes(
+                layout, -3.25, 4,
+            )),
+            minimal_sas_fixture::FixtureValue::String("WXYZ".to_string()),
+        ],
+    ];
 
     let loader = InMemorySourceLoader {
         bytes: minimal_sas_fixture::build_fixture(&definition),
     };
-    let service = ParserTransformService::new(loader, SupportedSas7bdatParser, StubParquetSink);
-    let error = service
-        .run(deferred_numeric_request())
-        .expect_err("deferred numeric materialization should stay explicit");
+    let service = ParserTransformService::new(loader, SupportedSas7bdatParser, LocalParquetSink);
+    let report = service
+        .run(narrow_numeric_filtered_request(output_path.clone()))
+        .expect("narrow numeric materialization should support filtered parquet output");
 
-    assert!(
-        error
-            .to_string()
-            .contains("numeric materialization is deferred"),
-        "unexpected error: {error}"
+    assert_eq!(report.status, TransformStatus::ParquetWritten);
+    assert_eq!(report.sink.status, ParquetSinkStatus::ParquetWritten);
+    assert_eq!(read_optional_float64_column(&output_path, 0), vec![Some(42.5)]);
+    assert_eq!(read_optional_utf8_column(&output_path, 1), vec![None]);
+    let _ = std::fs::remove_file(output_path);
+}
+
+#[test]
+fn parser_transform_service_materializes_big_endian_non_8_byte_missing_tags() {
+    let output_path =
+        minimal_sas_fixture::unique_tmp_path("transform-big-endian-narrow-numeric", "parquet");
+    let layout = minimal_sas_fixture::FixtureLayout::bit64_big();
+    let mut definition = minimal_sas_fixture::supported_fixture_definition();
+    definition.layout = layout;
+    definition.columns = vec![
+        minimal_sas_fixture::FixtureColumn::Numeric {
+            name: "measure".to_string(),
+            width: 5,
+        },
+        minimal_sas_fixture::FixtureColumn::String {
+            name: "code".to_string(),
+            width: 4,
+        },
+    ];
+    definition.rows = vec![
+        vec![
+            minimal_sas_fixture::FixtureValue::NumericBytes(truncated_numeric_bytes(
+                layout, 7.0, 5,
+            )),
+            minimal_sas_fixture::FixtureValue::String("ABCD".to_string()),
+        ],
+        vec![
+            minimal_sas_fixture::FixtureValue::NumericBytes(truncated_missing_numeric_bytes(
+                layout, 'A', 5,
+            )),
+            minimal_sas_fixture::FixtureValue::String("MISS".to_string()),
+        ],
+    ];
+
+    let loader = InMemorySourceLoader {
+        bytes: minimal_sas_fixture::build_fixture(&definition),
+    };
+    let service = ParserTransformService::new(loader, SupportedSas7bdatParser, LocalParquetSink);
+    let report = service
+        .run(narrow_numeric_request(output_path.clone()))
+        .expect("big-endian narrow numerics should materialize into parquet output");
+
+    assert_eq!(report.status, TransformStatus::ParquetWritten);
+    assert_eq!(read_optional_float64_column(&output_path, 0), vec![Some(7.0), None]);
+    assert_eq!(
+        read_optional_utf8_column(&output_path, 1),
+        vec![None, Some("A".to_string())]
     );
+    let _ = std::fs::remove_file(output_path);
 }
 
 #[test]
@@ -508,7 +571,7 @@ fn unsupported_filter_request() -> TransformRequest {
     }
 }
 
-fn deferred_numeric_request() -> TransformRequest {
+fn narrow_numeric_request(output_path: PathBuf) -> TransformRequest {
     TransformRequest {
         source: SourceContract {
             path: "fixtures/deferred-numeric.sas7bdat".into(),
@@ -518,7 +581,7 @@ fn deferred_numeric_request() -> TransformRequest {
             mode: DecodeMode::StreamingPages,
         },
         transform: TransformContract {
-            selection: Vec::new(),
+            selection: vec!["measure".to_string()],
             filter: None,
             execution: ExecutionModel::Streaming,
             tuning: TransformTuning {
@@ -527,9 +590,45 @@ fn deferred_numeric_request() -> TransformRequest {
             },
         },
         sink: SinkContract {
-            path: "fixtures/deferred-numeric.parquet".into(),
+            path: output_path,
             format: SinkFormat::Parquet,
         },
+    }
+}
+
+fn narrow_numeric_filtered_request(output_path: PathBuf) -> TransformRequest {
+    let mut request = narrow_numeric_request(output_path);
+    request.transform.filter = Some("measure >= 1".to_string());
+    request
+}
+
+fn truncated_numeric_bytes(
+    layout: minimal_sas_fixture::FixtureLayout,
+    value: f64,
+    width: usize,
+) -> Vec<u8> {
+    assert!((1..=8).contains(&width), "numeric width must be between 1 and 8 bytes");
+    let raw = match layout.endianness {
+        Endianness::Little => value.to_le_bytes().to_vec(),
+        Endianness::Big => value.to_be_bytes().to_vec(),
+    };
+    truncate_numeric_storage_bytes(raw, layout.endianness, width)
+}
+
+fn truncated_missing_numeric_bytes(
+    layout: minimal_sas_fixture::FixtureLayout,
+    tag: char,
+    width: usize,
+) -> Vec<u8> {
+    assert!((1..=8).contains(&width), "numeric width must be between 1 and 8 bytes");
+    let raw = minimal_sas_fixture::tagged_missing_numeric_bytes(layout, tag);
+    truncate_numeric_storage_bytes(raw, layout.endianness, width)
+}
+
+fn truncate_numeric_storage_bytes(raw: Vec<u8>, endianness: Endianness, width: usize) -> Vec<u8> {
+    match endianness {
+        Endianness::Little => raw[8 - width..].to_vec(),
+        Endianness::Big => raw[..width].to_vec(),
     }
 }
 

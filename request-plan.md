@@ -1,74 +1,32 @@
 # Request Plan
 
-- request_id: 2026-04-17-sas-rs-full-spec-rebaseline
-- user_goal: Build SAS-rs from the attached spec into the fastest practical `.sas7bdat` reader possible, with a CLI that transforms to parquet, strong benchmarking, unit tests, idiomatic Rust, larger-than-memory performance, and the broader compatibility and correctness coverage explicitly required by spec.md.
-- authoritative_spec: spec.md
-- request_baseline_note: This is a materially reopened request against the full authoritative spec. The prior subset-complete request plan is no longer authoritative because it did not satisfy the full layout, endianness, encoding, compression, page and subheader, semantic typing, metadata preservation, fuzzing, regression, and proof obligations in spec.md.
-- current_request_state: pr_scope_in_progress
+- request_id: 2026-04-18-journal-full-code-sweep
+- user_goal: Produce a comprehensive journal.md by sweeping the Rust project file-by-file and function-by-function, recording observations, speculative performance-improvement ideas, and research-style hypotheses, experiments, and results notes for every function in scope.
+- authoritative_spec: user request on 2026-04-18
+- request_baseline_note: This is a materially new documentation and research request. The previously complete full-spec implementation plan is no longer the active planning artifact because it described product-delivery closure rather than a repository-wide function journal sweep.
+- current_request_state: complete
+
+## Request-Level Issue Status
+
+- final_issue_sync_status: clean_for_request_closure
+- issue_status_note: Reviewed open issues #1, #4, #5, #6, #7, #8, #9, and #10; none newly block or change completion of this docs-only journal request.
 
 ## Ordered PR Scopes
 
-1. capability_contracts_numeric_widths_and_honest_harness
+1. journal_full_code_sweep_and_research_notes
    - status: complete
-   - objective: Replace subset-specific parser and transform contracts with matrix-capable physical and semantic schema interfaces, preserve the current supported subset through them, remove the hard 8-byte numeric assumption, make parser benchmarking drain streamed batches instead of parse-entry timing, and use real sample datasets starting with sample-sas-datasets/fts0003.sas7bdat to test actual readability and establish an initial real-file baseline for future experiments.
-   - included_requirements: 6, 7, 19
-   - deferred_requirements: 1, 2, 3, 4, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 20, 21, 22, 23, 24, 25, 26
-   - why_now: The current code hard-codes a narrow physical value model. Later layout, encoding, compression, and semantic work will be brittle unless the shared contracts and validation seams are generalized first, and the user explicitly wants the first real-dataset probe to happen now rather than after a synthetic-only review.
-
-2. portable_core_decode_layouts_endianness_encodings_and_subheaders
-   - status: complete
-   - objective: Extend the core parser to handle 32-bit and 64-bit layouts, little-endian and big-endian variants, non-UTF-8 encodings with latin-1 support, and the broader subheader set required for those files.
-   - included_requirements: 12, 13, 14, 18
-   - deferred_requirements: 1, 2, 3, 4, 9, 10, 11, 15, 16, 17, 20, 21, 22, 23, 24, 25, 26
-   - why_later: Depends on PR-01 providing matrix-capable contracts and keeping layout portability separate from compression and semantic policy.
-
-3. compression_and_full_page_type_coverage
-   - status: complete
-   - objective: Add row compression, binary compression, and the broader page-type dispatcher coverage needed to process files outside the current META and DATA subset while preserving streaming behavior.
-   - included_requirements: 15, 16, 17
-   - deferred_requirements: 1, 2, 3, 4, 9, 10, 11, 20, 21, 22, 23, 24, 25, 26
-   - why_later: Compression and page-dispatch expansion are tightly coupled, but they should build on the portable core decode from PR-02.
-
-4. semantic_sas_typing_and_metadata_preservation
-   - status: complete
-   - objective: Map physical SAS values into honest Arrow and Parquet semantics, including dates, times, datetimes, duration-like values, labels, formats, informats, and SAS special missing values.
-   - included_requirements: 11, 20, 21, 22
-   - deferred_requirements: 1, 2, 3, 4, 9, 10, 23, 24, 25, 26
-   - why_later: This scope needs the broader physical decode matrix in place first so semantic policy is applied once rather than duplicated across earlier parser changes.
-
-5. robustness_corpus_fuzzing_and_differential_validation
-   - status: complete
-   - objective: Build the broadened safety net with malformed-input coverage, fuzzing, a real regression corpus, an automated sweep over sample-sas-datasets, and differential validation against a trusted reader.
-   - included_requirements: 6, 23, 24
-   - deferred_requirements: 1, 2, 3, 4, 9, 10, 25, 26
-   - why_later: Validation hardening is most valuable after the compatibility and semantic matrix has expanded materially.
-
-6. sample_corpus_compatibility_and_requirement_27_closure
-   - status: complete
-   - objective: Close the compatibility gap surfaced by the full sample corpus sweep by resolving all valid sample-corpus failures, freezing the invalid-fixture policy, and rerunning the full corpus sweep to a closure state.
-   - included_requirements: 14, 16, 17, 18, 27
-   - deferred_requirements: 1, 2, 3, 4, 5, 7, 8, 9, 10, 25, 26, 28
-   - why_now: PR-05 proved the validation harnesses and exposed 43 sample-corpus failures. Final performance or request-closure claims would be premature until the valid sample corpus boundary is actually closed.
-
-7. performance_memory_benchmarks_and_request_closure
-   - status: in_progress
-   - objective: Prove that the broadened implementation meets the request-level bar for streaming, bounded memory, CLI usability, parallel execution, benchmarked throughput, and documented benchmark coverage on the final supported surface, then close the full request honestly.
-   - included_requirements: 1, 2, 3, 4, 5, 7, 8, 9, 10, 25, 26, 28
-   - deferred_requirements: none
-   - why_later: This is the final closure scope and should run only after the sample-corpus compatibility boundary is settled.
+   - objective: Inventory the Rust codebase, create journal.md, and populate it with file-by-file and function-by-function observations, speculative performance avenues, and research-style notes covering hypotheses, experiment ideas, and current results or evidence gaps.
+   - included_scope: Rust files under src, tests, benches, and fuzz that define functions or materially frame the function inventory.
+   - deferred_scope: none
+   - why_now: The user explicitly asked for a large-scale code sweep and a fully populated journal before any narrower optimization follow-up.
 
 ## Active PR Scope
 
-- active_pr_scope: performance_memory_benchmarks_and_request_closure
+- active_pr_scope: none
 
 ## Completed PR Scopes
 
-- capability_contracts_numeric_widths_and_honest_harness
-- portable_core_decode_layouts_endianness_encodings_and_subheaders
-- compression_and_full_page_type_coverage
-- semantic_sas_typing_and_metadata_preservation
-- robustness_corpus_fuzzing_and_differential_validation
-- sample_corpus_compatibility_and_requirement_27_closure
+- journal_full_code_sweep_and_research_notes
 
 ## Deferred PR Scopes
 
@@ -80,17 +38,15 @@
 
 ## Request Completion Gates
 
-- Requirements 1 through 4 are satisfied with evidence on broadened realistic workloads, not only on the prior supported synthetic subset.
-- Requirements 5, 7, 8, and 28 are satisfied across the delivered implementation, benchmark suite, and supporting documentation, not merely assumed as general quality bars.
-- Requirements 6, 23, and 24 are satisfied with automated tests, fuzzing infrastructure, regression coverage, and validation harnesses that cover the broadened format matrix.
-- Requirements 9, 10, 25, and 26 are proven on the broadened feature set, including layouts, encodings, compression, and richer value semantics.
-- Requirements 11 through 22 are satisfied across the parser and transform pipeline with explicit Arrow and Parquet mapping behavior.
-- Requirement 27 is satisfied only when every valid .sas7bdat sample in sample-sas-datasets is readable by the implementation and every invalid-format or non-SAS fixture in that directory is explicitly classified and documented rather than silently treated as supported.
-- Real-dataset evidence starts with sample-sas-datasets/fts0003.sas7bdat, expands honestly rather than inferred from synthetic fixtures alone, and includes an automated corpus sweep over sample-sas-datasets as compatibility support grows.
-- Request completion requires an automated read-validation pass across the full sample-sas-datasets corpus, with fts0003.sas7bdat retained as the primary baseline-performance fixture for future experiments.
-- No remaining uncovered spec items are implied complete; they remain tracked in unresolved PR scopes until evidence says otherwise.
+- The active request plan has been rebaselined away from the previously complete product-delivery request.
+- A concrete function inventory exists for the Rust project surface in scope.
+- journal.md exists at the repository root and is materially populated rather than stubbed.
+- journal.md proceeds file-by-file and function-by-function across the in-scope Rust files.
+- Each analyzed function records observations or ideas for possible performance improvements, even when speculative.
+- The journal includes research-style notes such as hypotheses, experiment ideas, and current results or evidence gaps.
+- Coverage is cross-checked against the discovered function inventory so the sweep does not silently skip files or functions.
 
 ## Final Response Readiness
 
-- final_response_readiness: not ready
-- reason: PR-01 through PR-06 are complete, requirement 27 now has recorded closure evidence, and PR-07 remains active for final performance, memory, benchmark, and request-closure proof.
+- final_response_readiness: ready
+- reason: The journal sweep PR scope is complete, final issue sync is clean for this request, coverage reconciles at 28 files and 392 functions, and the request is ready for final response.
