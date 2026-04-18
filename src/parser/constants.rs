@@ -11,6 +11,7 @@ pub(crate) const SAS_ENDIAN_LITTLE: u8 = 0x01;
 pub(crate) const SAS_COMPRESSION_NONE: u8 = 0x00;
 pub(crate) const SAS_COMPRESSION_TRUNC: u8 = 0x01;
 pub(crate) const SAS_COMPRESSION_ROW: u8 = 0x04;
+pub(crate) const SAS_COMPRESSION_ROW_ALT: u8 = 0x05;
 
 pub(crate) const UTF8_ENCODING_CODE: u8 = 20;
 pub(crate) const LATIN1_ENCODING_CODE: u8 = 29;

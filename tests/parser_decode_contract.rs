@@ -69,6 +69,21 @@ fn probe_fts0003_via_parser_entrypoint() -> RealFileProbeOutcome {
     probe_sample_via_parser_entrypoint("fts0003.sas7bdat")
 }
 
+fn assert_real_file_is_readable(file_name: &str) {
+    match probe_sample_via_parser_entrypoint(file_name) {
+        RealFileProbeOutcome::Readable {
+            row_count,
+            decoded_rows,
+        } => assert_eq!(
+            decoded_rows, row_count,
+            "{file_name} should drain the full streamed decode path once parsed"
+        ),
+        RealFileProbeOutcome::Unsupported { stage, detail } => {
+            panic!("{file_name} should be readable; failed during {stage}: {detail}");
+        }
+    }
+}
+
 fn drain_all_rows(
     parsed: &mut sas_rs::parser::ParsedSas7bdat,
     batch_size_rows: usize,
@@ -504,6 +519,69 @@ fn parser_reads_the_real_fts0003_file_through_the_compressed_entrypoint() {
             panic!("fts0003 should be readable within PR-03; failed during {stage}: {detail}");
         }
     }
+}
+
+#[test]
+fn parser_reads_real_binary_compressed_samples_through_the_existing_entrypoint() {
+    for file_name in [
+        "dates_binary.sas7bdat",
+        "dates_char.sas7bdat",
+        "dates_longname_binary.sas7bdat",
+        "dates_longname_char.sas7bdat",
+        "sample_bincompressed.sas7bdat",
+        "test11.sas7bdat",
+        "test12.sas7bdat",
+        "test14.sas7bdat",
+        "test15.sas7bdat",
+        "test2.sas7bdat",
+        "test3.sas7bdat",
+        "test5.sas7bdat",
+        "test6.sas7bdat",
+        "test8.sas7bdat",
+        "test9.sas7bdat",
+    ] {
+        assert_real_file_is_readable(file_name);
+    }
+}
+
+#[test]
+fn parser_reads_real_non_utf8_samples_through_the_existing_entrypoint() {
+    for file_name in [
+        "0x40controlbyte.sas7bdat",
+        "datetime.sas7bdat",
+        "issue1_pandas.sas7bdat",
+        "issue_pandas.sas7bdat",
+        "max_sas_date.sas7bdat",
+        "productsales.sas7bdat",
+        "q_del_pandas.sas7bdat",
+        "q_pandas.sas7bdat",
+        "weigth2.sas7bdat",
+        "zero_rows.sas7bdat",
+    ] {
+        assert_real_file_is_readable(file_name);
+    }
+}
+
+#[test]
+fn parser_decodes_real_gb18030_text_values_honestly() {
+    let parser = SupportedSas7bdatParser;
+    let mut parsed = parser
+        .parse(ParserInput::from_reader(
+            "issue_pandas.sas7bdat",
+            File::open(sample_dataset_path("issue_pandas.sas7bdat"))
+                .expect("issue_pandas fixture should open"),
+        ))
+        .expect("issue_pandas fixture should parse");
+
+    let batch = parsed
+        .next_batch(1)
+        .expect("batch decoding should succeed")
+        .expect("expected one row");
+
+    assert_eq!(
+        batch.rows[0].values,
+        vec![ParsedValue::String("小类_长筒袜　".to_string())]
+    );
 }
 
 #[test]

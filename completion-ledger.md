@@ -1,112 +1,80 @@
 # Completion Ledger
 
-- pr_scope_id: semantic_sas_typing_and_metadata_preservation
+- pr_scope_id: sample_corpus_compatibility_and_requirement_27_closure
 - authoritative_spec: spec.md
 - authoritative_request_plan: request-plan.md
-- ledger_baseline_note: Fresh active ledger created on 2026-04-17 because the previous active ledger was complete for materially different PR-03 scope `compression_and_full_page_type_coverage` and is not authoritative for PR-04 completion semantics.
+- ledger_baseline_note: Fresh active ledger created on 2026-04-17 because the prior active ledger was PR-05 and is not authoritative for PR-06.
 - pr_scope_state: complete
 - outcome_status: complete
 
 ## PR Scope Summary
-
-- objective: Map physical SAS values into honest Arrow and Parquet semantics, including dates, times, datetimes, duration-like values, labels, formats, informats, and SAS special missing values.
-- issue_membership: spec.md requirements 11, 20, 21, and 22.
+- objective: Close the compatibility gap surfaced by the full sample corpus sweep by resolving valid sample-corpus failures, freezing the invalid-fixture policy, and rerunning the sweep honestly.
+- issue_membership: requirements 14, 16, 17, 18, and 27, plus issue #1; issue #7 remains deferred to PR-07.
 - issue_delta_status: clear_no_new_sequencing_changes
-- issue_delta_evidence: The active request constraints still hold for PR-04. No new issue-driven resequencing was introduced while executing the semantic typing slice, and the later robustness/fuzzing and performance-closure scopes remain explicitly deferred exactly as planned.
-- planning_status: The selected full-stack semantic slice was executed to completion. The parser now surfaces semantic type hints, column labels and formats, and SAS special missing tags; the transform layer writes honest Arrow and Parquet logical types, preserves schema metadata, and exposes numeric missing tags through explicit sidecar columns.
+- planning_status: The parser now reads the formerly blocked Binary-compressed and non-UTF-8 sample fixtures, the invalid-fixture policy is executable in the validation layer, and the full corpus rerun closes requirement 27 with zero remaining compatibility failures.
 
 ## State Transitions
-
-1. 2026-04-17: intake -> pr_scope_defined
-   - reason: Request Manager handed off materially new active PR scope PR-04 and the prior active ledger described completed PR-03 compression/page-dispatch work.
-2. 2026-04-17: pr_scope_defined -> slice_ready
-   - reason: Rebaselined the active ledger, confirmed issue membership and PR-04 completion gates, and verified the existing parser/transform baseline before semantic changes.
-3. 2026-04-17: slice_ready -> slice_in_progress
-   - reason: Began the semantic parser/transform slice covering SAS semantic typing, metadata preservation, and special missing-value handling.
-4. 2026-04-17: slice_in_progress -> slice_review
-   - reason: Implemented parser-side semantic metadata extraction, transform-side Arrow/Parquet semantic projection, schema metadata preservation, explicit missing-tag sidecars, and the real-fixture coverage needed for the active scope.
-5. 2026-04-17: slice_review -> awaiting_issue_sync
-   - reason: Completed the bounded PR-04 slice and collected full parser, transform, real-dataset, and command evidence without expanding into later corpus or performance scopes.
-6. 2026-04-17: awaiting_issue_sync -> pr_review
-   - reason: No new issue-driven resequencing was required within the active PR scope, and all PR-04 completion gates had pass evidence.
-7. 2026-04-17: pr_review -> complete
-   - reason: The PR-04 completion gates are satisfied, the full repository test suite passed, and the remaining unresolved work stays explicitly deferred to later request-plan scopes.
+1. 2026-04-18: intake -> pr_scope_defined
+   - reason: Fresh PR-06 ledger created because the prior active ledger was complete for PR-05 and not authoritative for the new requirement-27 closure scope.
+2. 2026-04-18: pr_scope_defined -> slice_ready
+   - reason: Reconfirmed the live gap from the corpus sweep: 25 valid-but-unsupported fixtures plus 18 invalid-format or non-SAS fixtures that required explicit policy.
+3. 2026-04-18: slice_ready -> slice_in_progress
+   - reason: Began the bounded parser and validation slice to close Binary compression, encoding support, and invalid-fixture classification gaps.
+4. 2026-04-18: slice_in_progress -> slice_review
+   - reason: Implemented expanded encoding support, COMP-page routing, alternate row-compression marker handling, and classification-aware validation/reporting updates.
+5. 2026-04-18: slice_review -> awaiting_issue_sync
+   - reason: Re-ran the targeted parser and validation contracts and refreshed the full corpus sweep and differential evidence.
+6. 2026-04-18: awaiting_issue_sync -> pr_review
+   - reason: Issue sync remained clear and every PR-06 completion gate had fresh pass evidence.
+7. 2026-04-18: pr_review -> complete
+   - reason: The full repository test suite and clippy passed, differential validation matched haven, and the full sample sweep recorded zero remaining valid-fixture compatibility failures.
 
 ## Slice Execution Evidence
-
-1. scope_rebaseline_and_pr04_issue_sync
-   - status: complete
-   - lane: pr_manager
-   - evidence: Replaced the stale PR-03 completion artifact with a fresh PR-04 ledger, preserved the request-level deferments around corpus/fuzzing closure and final performance proof, and confirmed no new issue-driven sequencing changes for the active semantic scope.
-2. pr04_s1_parser_semantic_metadata_and_missing_tags
+1. pr06_s1_parser_corpus_compatibility_closure
    - status: complete
    - lane: backend
-   - evidence: Extended parser contracts to carry semantic type hints and SAS missing-tag state, parsed column format and label metadata from sas7bdat subheaders, corrected MIX/AMD page-type handling required by the real PR-04 fixtures, and decoded real tagged-missing values using the readstat-compatible tag scheme.
-3. pr04_s2_transform_arrow_parquet_semantics_and_metadata
+   - evidence: The parser now accepts encoding codes 28, 40, 61, 125, and 204; routes `COMP` pages through the raw fixed-width row path; and treats pointer marker `0x05` as the same row-compressed subheader mode as `0x04`, which closes the former Binary and non-UTF-8 fixture failures.
+2. pr06_s2_validation_policy_and_harness_closure
    - status: complete
    - lane: full_stack
-   - evidence: The Parquet sink now maps semantic numeric columns to Arrow `Date32`, `Time64(Microsecond)`, `Timestamp(Microsecond, None)`, and `Duration(Microsecond)` as appropriate, preserves schema and field metadata, and writes nullable `<column>__sas_missing_tag` Utf8 sidecars for numeric-origin columns so SAS special missings are not flattened into plain `f64`.
-4. pr04_s3_real_fixture_and_contract_evidence
-   - status: complete
-   - lane: full_stack
-   - evidence: Added synthetic semantic fixture coverage for date/time/datetime/duration conversion, real-file parser probes for `sample-sas-datasets/dates.sas7bdat` and `sample-sas-datasets/missing_test.sas7bdat`, transform integration coverage for real metadata and sidecar-tag output, and a sink unit test proving that informat metadata is preserved when supplied by the parser contract.
-5. pr04_docs_boundary_refresh
-   - status: complete
-   - lane: backend
-   - evidence: Updated `src/transform/README.md` so the documented transform boundary matches the new semantic Arrow/Parquet mapping, schema metadata preservation, explicit missing-tag sidecars, and the still-deferred narrow-numeric materialization boundary.
-
-## Next Slice
-
-- selected_slice: none
-- lane: none
-- objective: PR-04 is complete; remaining request work stays in later planned scopes for robustness/corpus/fuzzing validation and final performance/memory closure.
+   - evidence: The validation module now exposes an explicit expected-invalid fixture registry, the sweep report distinguishes expected-invalid fixtures from compatibility failures, the sweep CLI exits nonzero only when valid fixtures still fail, and the docs now describe that boundary honestly.
 
 ## Completion Gate Status
+1. gate_1_rebaseline: pass
+   - evidence: completion-ledger.md remained the authoritative PR-06 artifact and was updated from the earlier fail-state baseline to a completed PR-06 record.
+2. gate_2_fixture_classification_contract: pass
+   - evidence: `tests/validation_contract.rs` now enforces the explicit 18-fixture expected-invalid policy and verifies that the live probe results still match it.
+3. gate_3_all_valid_samples_readable: pass
+   - evidence: `.tmp/pr06-corpus-sweep.txt` records `compatibility_failures=0`, so every valid `.sas7bdat` fixture in `sample-sas-datasets/` is now readable by the implementation.
+4. gate_4_binary_and_encoding_closure: pass
+   - evidence: The former 25 valid failures are closed through real parser coverage for Binary-compressed fixtures and non-UTF-8 fixtures, including GB18030 text decoding in `issue_pandas.sas7bdat`.
+5. gate_5_full_sweep_rerun_and_recorded: pass
+   - evidence: `cargo run --bin sample_corpus_sweep -- --output .tmp/pr06-corpus-sweep.txt` completed with `total=291`, `readable=273`, `expected_invalid=18`, and `compatibility_failures=0`.
+6. gate_6_docs_boundary_updated: pass
+   - evidence: README and validation-module documentation now describe the expected-invalid policy and the compatibility-failure-focused sweep exit behavior.
+7. gate_7_tests_and_checks_pass: pass
+   - evidence: `cargo test --test parser_decode_contract -- --nocapture`, `cargo test --test validation_contract -- --nocapture`, `cargo test`, and `cargo clippy --all-targets -- -D warnings` all passed after the PR-06 changes.
 
-1. Active ledger is rebaselined for PR-04 and no longer uses PR-03 completion truth.
-   - status: pass
-   - evidence: completion-ledger.md now records the active semantic typing and metadata-preservation outcome instead of the completed compression/page-dispatch scope.
-2. Physical SAS numerics are mapped into honest Arrow and Parquet logical types for dates, times, datetimes, duration-like values, and ordinary numeric values.
-   - status: pass
-   - evidence: The transform sink now derives semantic projection kinds from parser metadata and writes Arrow `Date32`, `Time64(Microsecond)`, `Timestamp(Microsecond, None)`, `Duration(Microsecond)`, and nullable `Float64` columns as appropriate. Synthetic semantic integration coverage proves representative value conversions end to end.
-3. SAS labels, formats, and parser-supplied informat metadata are preserved into Arrow and Parquet schema metadata.
-   - status: pass
-   - evidence: Parser metadata now carries labels and formats from real sas7bdat subheaders; transform field metadata preserves `sas.label`, `sas.format_name`, `sas.semantic_type`, and `sas.missing_tag_column`, and a sink unit test proves `sas.informat_name` is preserved whenever the parser contract supplies it.
-4. SAS special missing values are represented honestly instead of being flattened into plain `f64` values.
-   - status: pass
-   - evidence: Real tagged-missing values from `sample-sas-datasets/missing_test.sas7bdat` now decode into explicit `SasMissingTag` values in the parser and materialize in Parquet as nulls in the primary numeric columns plus the corresponding tag code in nullable sidecar Utf8 columns.
-5. Real-dataset evidence covers the PR-04 target fixtures without claiming full corpus completion.
-   - status: pass
-   - evidence: Parser and transform tests now exercise `sample-sas-datasets/dates.sas7bdat` and `sample-sas-datasets/missing_test.sas7bdat`, while broader corpus validation remains explicitly deferred to the planned robustness scope.
-6. Tests and quality checks pass for the broadened semantic pipeline and the broader repository remains green.
-   - status: pass
-   - evidence: `cargo test` passed after the parser, transform, and contract updates, including the new semantic unit and integration coverage.
-7. Documentation reflects the current semantic support boundary honestly.
-   - status: pass
-   - evidence: `src/transform/README.md` now documents the actual semantic Arrow/Parquet mappings, missing-tag sidecar behavior, metadata preservation, and the remaining deferred boundary around narrow numeric materialization.
+## Invalid Fixture Policy Evidence
+- current_policy_evidence: 18 fixtures remain explicitly classified as expected-invalid in `.tmp/pr06-corpus-sweep.txt`, rather than being counted as compatibility failures.
+- invalid_clusters: 16 missing sas7bdat magic number; 1 invalid header/page size; 1 missing row size subheader.
+- representative_invalid_fixtures: FileFromJMP.sas7bdat, yrbscol.sas7bdat, corrupt.sas7bdat, zero_variables.sas7bdat.
+
+## Valid-Fixture Closure Evidence
+- valid_unsupported_count: 0
+- closure_summary: The former Binary and encoding gaps are closed in the live sweep, including `dates_binary.sas7bdat`, `sample_bincompressed.sas7bdat`, `datetime.sas7bdat`, `productsales.sas7bdat`, `issue_pandas.sas7bdat`, `q_del_pandas.sas7bdat`, and `weigth2.sas7bdat`.
+- representative_parser_contracts: `tests/parser_decode_contract.rs` now exercises the real Binary-compressed sample set, the non-UTF-8 sample set, and GB18030 text value decoding.
 
 ## Command Evidence
-
-1. `cargo test --test parser_decode_contract --test transform_contract --test transform_parser_integration`
-   - result: pass
-   - details: Targeted parser and transform suites passed, including real `dates.sas7bdat` metadata coverage, real `missing_test.sas7bdat` missing-tag coverage, and synthetic semantic conversion assertions.
-2. `cargo test`
-   - result: pass
-   - details: The full repository test suite passed, including the new sink unit test proving schema metadata preserves parser-supplied informats.
-3. `cargo clippy --all-targets -- -D warnings`
-   - result: pass
-   - details: Clippy completed cleanly with warnings denied after the semantic parser and transform changes.
-
-## Blockers And Waivers
-
-- blockers: none within PR-04
-- waivers: none
-- explicit_deferred_handoffs:
-  - corpus sweep, fuzzing, and differential validation remain deferred to `robustness_corpus_fuzzing_and_differential_validation`
-  - final throughput and memory proof on the broadened semantic matrix remain deferred to `performance_memory_proof_and_request_closure`
+- cargo test --test parser_decode_contract -- --nocapture: pass (17 tests passed)
+- cargo test --test validation_contract -- --nocapture: pass (6 tests passed)
+- cargo run --bin sample_corpus_sweep -- --output .tmp/pr06-corpus-sweep.txt: pass (total=291, readable=273, expected_invalid=18, compatibility_failures=0)
+- cargo run --bin differential_validate -- --output .tmp/pr06-differential.txt: pass (fixtures=2, matched=2, failures=0, skipped=0)
+- cargo test: pass (full repository suite passed)
+- cargo clippy --all-targets -- -D warnings: pass
+- issue sync: reviewed issue #1, #6, #7, #8, #9, and #10; no new PR-06 sequencing changes
 
 ## Upward Report
-
 - active_pr_scope_status: complete
 - request_completion_signal: not ready
-- residual_note: PR-04 is complete for the active semantic typing and metadata-preservation boundary. Full request completion is still blocked only on the later planned scopes for robustness/corpus validation and performance/memory closure.
+- residual_note: PR-06 is complete. PR-07 remains the only unresolved request scope for final performance, memory, benchmark, and request-closure proof.

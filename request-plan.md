@@ -37,22 +37,29 @@
    - why_later: This scope needs the broader physical decode matrix in place first so semantic policy is applied once rather than duplicated across earlier parser changes.
 
 5. robustness_corpus_fuzzing_and_differential_validation
-   - status: in_progress
+   - status: complete
    - objective: Build the broadened safety net with malformed-input coverage, fuzzing, a real regression corpus, an automated sweep over sample-sas-datasets, and differential validation against a trusted reader.
    - included_requirements: 6, 23, 24
    - deferred_requirements: 1, 2, 3, 4, 9, 10, 25, 26
    - why_later: Validation hardening is most valuable after the compatibility and semantic matrix has expanded materially.
 
-6. performance_memory_proof_and_request_closure
-   - status: planned
-   - objective: Prove that the broadened implementation still meets the request-level bar for streaming, bounded memory, CLI usability, parallel execution, and throughput on realistic workloads, then close the full request honestly.
-   - included_requirements: 1, 2, 3, 4, 5, 8, 9, 10, 25, 26
+6. sample_corpus_compatibility_and_requirement_27_closure
+   - status: complete
+   - objective: Close the compatibility gap surfaced by the full sample corpus sweep by resolving all valid sample-corpus failures, freezing the invalid-fixture policy, and rerunning the full corpus sweep to a closure state.
+   - included_requirements: 14, 16, 17, 18, 27
+   - deferred_requirements: 1, 2, 3, 4, 5, 7, 8, 9, 10, 25, 26, 28
+   - why_now: PR-05 proved the validation harnesses and exposed 43 sample-corpus failures. Final performance or request-closure claims would be premature until the valid sample corpus boundary is actually closed.
+
+7. performance_memory_benchmarks_and_request_closure
+   - status: in_progress
+   - objective: Prove that the broadened implementation meets the request-level bar for streaming, bounded memory, CLI usability, parallel execution, benchmarked throughput, and documented benchmark coverage on the final supported surface, then close the full request honestly.
+   - included_requirements: 1, 2, 3, 4, 5, 7, 8, 9, 10, 25, 26, 28
    - deferred_requirements: none
-   - why_later: This is the closure scope. It must run only after broad compatibility, semantic fidelity, and robustness work exist for the full spec.
+   - why_later: This is the final closure scope and should run only after the sample-corpus compatibility boundary is settled.
 
 ## Active PR Scope
 
-- active_pr_scope: robustness_corpus_fuzzing_and_differential_validation
+- active_pr_scope: performance_memory_benchmarks_and_request_closure
 
 ## Completed PR Scopes
 
@@ -60,6 +67,8 @@
 - portable_core_decode_layouts_endianness_encodings_and_subheaders
 - compression_and_full_page_type_coverage
 - semantic_sas_typing_and_metadata_preservation
+- robustness_corpus_fuzzing_and_differential_validation
+- sample_corpus_compatibility_and_requirement_27_closure
 
 ## Deferred PR Scopes
 
@@ -72,10 +81,11 @@
 ## Request Completion Gates
 
 - Requirements 1 through 4 are satisfied with evidence on broadened realistic workloads, not only on the prior supported synthetic subset.
-- Requirements 5 and 8 are satisfied across the delivered implementation and supporting documentation, not merely assumed as general quality bars.
-- Requirements 6, 7, 23, and 24 are satisfied with automated tests, fuzzing, regression coverage, and benchmark harnesses that cover the broadened format matrix.
+- Requirements 5, 7, 8, and 28 are satisfied across the delivered implementation, benchmark suite, and supporting documentation, not merely assumed as general quality bars.
+- Requirements 6, 23, and 24 are satisfied with automated tests, fuzzing infrastructure, regression coverage, and validation harnesses that cover the broadened format matrix.
 - Requirements 9, 10, 25, and 26 are proven on the broadened feature set, including layouts, encodings, compression, and richer value semantics.
 - Requirements 11 through 22 are satisfied across the parser and transform pipeline with explicit Arrow and Parquet mapping behavior.
+- Requirement 27 is satisfied only when every valid .sas7bdat sample in sample-sas-datasets is readable by the implementation and every invalid-format or non-SAS fixture in that directory is explicitly classified and documented rather than silently treated as supported.
 - Real-dataset evidence starts with sample-sas-datasets/fts0003.sas7bdat, expands honestly rather than inferred from synthetic fixtures alone, and includes an automated corpus sweep over sample-sas-datasets as compatibility support grows.
 - Request completion requires an automated read-validation pass across the full sample-sas-datasets corpus, with fts0003.sas7bdat retained as the primary baseline-performance fixture for future experiments.
 - No remaining uncovered spec items are implied complete; they remain tracked in unresolved PR scopes until evidence says otherwise.
@@ -83,4 +93,4 @@
 ## Final Response Readiness
 
 - final_response_readiness: not ready
-- reason: PR-01 through PR-04 are complete, PR-05 is now active, and the full request still has unresolved robustness/corpus validation and final performance-closure scopes.
+- reason: PR-01 through PR-06 are complete, requirement 27 now has recorded closure evidence, and PR-07 remains active for final performance, memory, benchmark, and request-closure proof.

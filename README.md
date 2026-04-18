@@ -58,10 +58,11 @@ The transform pipeline currently supports:
 
 The repository includes:
 
-- unit and integration tests for CLI, parser, transform, and streaming honesty checks
+- unit and integration tests for CLI, parser, transform, streaming honesty, and curated real-fixture regression coverage
 - real-sample parser coverage showing:
   - `sample-sas-datasets/10rec.sas7bdat` reads end to end through the current parser entrypoint
   - `sample-sas-datasets/fts0003.sas7bdat` now reads end to end through row-compressed subheaders plus the trailing `MIX` page
+  - a curated regression corpus keeps real wide-row, many-page, semantic, and expected-unsupported boundary fixtures under test
 - Criterion benchmarks for:
   - projection assumptions
   - parser-stage timing
@@ -181,6 +182,24 @@ cargo bench --bench transform_write -- --noplot --sample-size 15 --measurement-t
 ```
 
 The end-to-end benchmark that matters most for current completion claims is `transform_write`.
+
+## Validation Harnesses
+
+The repository now includes reviewable validation entrypoints for the real-fixture corpus boundary:
+
+```bash
+cargo test --test validation_contract
+cargo run --bin sample_corpus_sweep -- --output .tmp/pr06-corpus-sweep.txt
+cargo run --bin differential_validate -- --output .tmp/pr06-differential.txt
+cargo fuzz run parser_entry -- -max_total_time=30
+```
+
+These harnesses are intentionally honest about the current boundary:
+
+- the curated regression corpus mixes readable fixtures with explicitly expected-invalid fixtures so regressions stay reviewable
+- `sample_corpus_sweep` records every fixture result, distinguishes expected-invalid files from true compatibility failures, and exits nonzero only when valid fixtures still fail
+- `differential_validate` currently compares the supported semantic surface that is feasible against `haven`, centered on `dates.sas7bdat` and `missing_test.sas7bdat`
+- the sweep and differential harnesses are evidence for requirement 27 closure; they do not imply the later performance and final request-closure scopes are complete
 
 ## Project Layout
 

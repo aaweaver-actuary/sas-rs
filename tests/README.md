@@ -10,6 +10,7 @@ This directory contains the Rust test suites for the active SAS-rs crate.
 - [transform_parser_integration.rs](transform_parser_integration.rs): parser-to-transform-to-Parquet integration, bounded-memory behavior, parallel batch reporting, and streaming honesty checks
 - [cli_transform_contract.rs](cli_transform_contract.rs): CLI request shaping and end-to-end default-service behavior
 - [assumption_probe_contract.rs](assumption_probe_contract.rs): deterministic checks for the small synthetic assumption probe
+- [validation_contract.rs](validation_contract.rs): curated real-fixture regression corpus, sample-corpus sweep contract coverage, and differential-fixture selection
 - [support/README.md](support/README.md): synthetic fixtures and tracked readers shared by the suites
 
 ## What These Tests Prove
@@ -22,10 +23,10 @@ The current suite is designed to prove three things:
 
 ## What These Tests Do Not Yet Prove
 
-The suite is still mostly synthetic. It does not yet prove:
+The suite is no longer purely synthetic, but it still does not yet prove:
 
-- broad compatibility against a large real-world `.sas7bdat` corpus
-- universal compression coverage
-- full SAS semantic fidelity across dates, times, datetimes, labels, and missing-value behavior
+- universal compatibility across the full real-world `.sas7bdat` corpus
+- that every sample-sas-datasets file is currently readable end to end
+- full SAS semantic fidelity beyond the explicitly differential-checked date/time and missing-value surface
 
 Those are future-coverage concerns, not regressions in the current supported subset.

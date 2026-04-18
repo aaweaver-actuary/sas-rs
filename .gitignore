@@ -1,4 +1,6 @@
 /target
 /haven-example
 /readstat-example
+/.tmp
+/.memories
 Cargo.lock

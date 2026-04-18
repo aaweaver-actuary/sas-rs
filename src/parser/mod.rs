@@ -2,7 +2,7 @@ use std::error::Error;
 use std::fmt::{self, Display, Formatter};
 use std::io::{Read, Seek, SeekFrom};
 
-use encoding_rs::WINDOWS_1252;
+use encoding_rs::{Encoding, GB18030, ISO_8859_15, WINDOWS_1251, WINDOWS_1252};
 
 pub mod constants;
 pub mod contracts;
@@ -23,7 +23,8 @@ pub use offsets::ParserOffsets;
 use self::constants::{
     DEFAULT_ENCODING_CODE, LATIN1_ENCODING_CODE, MAGIC_NUMBER, SAS_ALIGNMENT_OFFSET_0,
     SAS_ALIGNMENT_OFFSET_4, SAS_COLUMN_TYPE_CHR, SAS_COLUMN_TYPE_NUM, SAS_COMPRESSION_NONE,
-    SAS_COMPRESSION_ROW, SAS_COMPRESSION_SIGNATURE_RDC, SAS_COMPRESSION_SIGNATURE_RLE,
+    SAS_COMPRESSION_ROW, SAS_COMPRESSION_ROW_ALT, SAS_COMPRESSION_SIGNATURE_RDC,
+    SAS_COMPRESSION_SIGNATURE_RLE,
     SAS_COMPRESSION_TRUNC, SAS_ENDIAN_BIG, SAS_ENDIAN_LITTLE, SAS_PAGE_TYPE_AMD,
     SAS_PAGE_TYPE_COMP, SAS_PAGE_TYPE_DATA, SAS_PAGE_TYPE_MASK, SAS_PAGE_TYPE_META,
     SAS_PAGE_TYPE_MIX, SAS_SUBHEADER_SIGNATURE_COLUMN_ATTRS, SAS_SUBHEADER_SIGNATURE_COLUMN_FORMAT,
@@ -195,15 +196,20 @@ struct ParsedMetaPage {
 enum TextEncoding {
     Utf8,
     Latin1,
-    Windows1252,
+    EncodingRs(&'static Encoding),
 }
 
 impl TextEncoding {
     fn from_code(code: u8) -> Option<Self> {
         match code {
-            UTF8_ENCODING_CODE => Some(Self::Utf8),
+            UTF8_ENCODING_CODE | 28 => Some(Self::Utf8),
             LATIN1_ENCODING_CODE => Some(Self::Latin1),
-            WINDOWS_1252_ENCODING_CODE | DEFAULT_ENCODING_CODE => Some(Self::Windows1252),
+            40 => Some(Self::EncodingRs(ISO_8859_15)),
+            61 => Some(Self::EncodingRs(WINDOWS_1251)),
+            125 => Some(Self::EncodingRs(GB18030)),
+            WINDOWS_1252_ENCODING_CODE | DEFAULT_ENCODING_CODE | 204 => {
+                Some(Self::EncodingRs(WINDOWS_1252))
+            }
             _ => None,
         }
     }
@@ -219,8 +225,8 @@ impl TextEncoding {
                     )
                 }),
             Self::Latin1 => Ok(trimmed.iter().map(|byte| char::from(*byte)).collect()),
-            Self::Windows1252 => {
-                let (decoded, _, had_errors) = WINDOWS_1252.decode(trimmed);
+            Self::EncodingRs(encoding) => {
+                let (decoded, _, had_errors) = encoding.decode(trimmed);
                 if had_errors {
                     return Err(ParserError::InvalidFormat(
                         "text could not be decoded with the declared source encoding",
@@ -428,9 +434,18 @@ fn parse_supported_subset(
             layout.endianness,
         )?;
         if (page_type & SAS_PAGE_TYPE_COMP) != 0 {
-            return Err(ParserError::Unsupported(UnsupportedFeature::Compression(
-                CompressionMode::Binary,
-            )));
+            let raw_row_count = read_u16(
+                &page_header,
+                layout.page_header_size() - 6,
+                layout.endianness,
+            )? as usize;
+            row_sources.push(PageRowSource {
+                page_index,
+                raw_data_offset: Some(layout.page_header_size()),
+                raw_row_count,
+                subheader_rows: Vec::new(),
+            });
+            continue;
         }
 
         match page_type & SAS_PAGE_TYPE_MASK {
@@ -686,7 +701,7 @@ fn parse_meta_page(
                     }
                 }
             }
-            SAS_COMPRESSION_ROW => {
+            SAS_COMPRESSION_ROW | SAS_COMPRESSION_ROW_ALT => {
                 parsed_page.subheader_rows.push(SubheaderRowRef {
                     offset: pointer.offset,
                     len: pointer.len,
@@ -1670,7 +1685,7 @@ fn ensure_len(bytes: &[u8], min_len: usize, message: &'static str) -> Result<(),
 fn pointer_compression_mode(compression: u8) -> CompressionMode {
     match compression {
         SAS_COMPRESSION_NONE => CompressionMode::None,
-        SAS_COMPRESSION_ROW => CompressionMode::Row,
+        SAS_COMPRESSION_ROW | SAS_COMPRESSION_ROW_ALT => CompressionMode::Row,
         other => CompressionMode::Unknown(other),
     }
 }
@@ -1765,6 +1780,24 @@ mod tests {
         assert_eq!(
             error,
             ParserError::InvalidFormat("column attrs subheader is truncated")
+        );
+    }
+
+    #[test]
+    fn row_size_subheader_short_tail_returns_an_error() {
+        let layout = DecodeLayout {
+            word_size: WordSize::Bit32,
+            endianness: Endianness::Little,
+        };
+        let mut metadata = empty_metadata();
+        let subheader = vec![0_u8; layout.row_size_min_len() - 1];
+
+        let error = parse_row_size_subheader(&subheader, &mut metadata, layout)
+            .expect_err("short row-size payloads should be rejected without panicking");
+
+        assert_eq!(
+            error,
+            ParserError::InvalidFormat("row size subheader is truncated")
         );
     }
 }
