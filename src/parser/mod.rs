@@ -1,21 +1,22 @@
-use std::error::Error;
-use std::fmt::{self, Display, Formatter};
 use std::io::{Read, Seek, SeekFrom};
 
 use encoding_rs::{Encoding, GB18030, ISO_8859_15, WINDOWS_1251, WINDOWS_1252};
 
-pub mod column_type;
 pub mod compression_signature;
 pub mod constants;
 pub mod contracts;
 pub mod encoding;
 pub mod endianness;
-mod header;
 pub mod layouts;
-mod row;
+pub mod row;
+pub mod sas_column_type;
+pub mod sas_file_header;
 pub mod sas_layout;
+pub mod sas_metadata_accumulator;
 pub mod sas_page_type;
-mod subheader;
+pub mod subheader;
+pub mod text_ref;
+pub mod traits;
 pub mod types;
 pub mod unsupported_features;
 
@@ -25,28 +26,14 @@ pub use contracts::{
     SUPPORTED_SUBSET, SasColumn, SasMetadata, SasMissingTag, SemanticTypeHint, SupportedSubset,
     WordSize,
 };
-pub use header::SasFileHeader;
+pub use sas_file_header::SasFileHeader;
 pub use subheader::SasSubheaderSignature;
 
 use self::contracts::{PageRowSource, SubheaderRowRef};
 use self::row::{parse_row, parse_subheader_row};
-use self::subheader::{SasMetadataAccumulator, parse_meta_page};
+use self::subheader::parse_meta_page;
 
-impl Display for ParserError {
-    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::InvalidFormat(message) => formatter.write_str(message),
-            Self::Unsupported(feature) => feature.fmt(formatter),
-            Self::Io(message) => formatter.write_str(message),
-        }
-    }
-}
-
-impl Error for ParserError {}
-
-pub trait Sas7bdatParser {
-    fn parse(&self, input: ParserInput<'_>) -> Result<ParsedSas7bdat, ParserError>;
-}
+use sas_metadata_accumulator::SasMetadataAccumulator;
 
 #[derive(Debug, Default, Clone, Copy)]
 pub struct SupportedSas7bdatParser;

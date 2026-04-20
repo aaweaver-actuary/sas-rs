@@ -2,9 +2,9 @@ use super::contracts::{
     ColumnKind, CompressionMode, Endianness, NumericValue, ParsedRow, ParsedValue, SasMetadata,
     SasMissingTag,
 };
-use super::{ParserError, UnsupportedFeature, decode_text_bytes};
+use super::decode_text_bytes;
 
-pub(crate) fn parse_subheader_row(
+pub fn parse_subheader_row(
     page: &[u8],
     offset: usize,
     len: usize,
@@ -34,7 +34,7 @@ pub(crate) fn parse_subheader_row(
     }
 }
 
-pub(crate) fn parse_row(
+pub fn parse_row(
     row: &[u8],
     metadata: &SasMetadata,
     text_encoding_code: u8,

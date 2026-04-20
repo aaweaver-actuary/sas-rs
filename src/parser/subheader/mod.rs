@@ -1,12 +1,16 @@
+pub mod pointer;
+pub mod signature;
+use super::TextRef;
+
 use super::SubheaderRowRef;
 use super::constants::{
     SAS_COLUMN_TYPE_CHR, SAS_COLUMN_TYPE_NUM, SAS_COMPRESSION_NONE, SAS_COMPRESSION_ROW,
-    SAS_COMPRESSION_ROW_ALT, SAS_COMPRESSION_SIGNATURE_RDC, SAS_COMPRESSION_SIGNATURE_RLE,
-    SAS_COMPRESSION_TRUNC, SAS_SUBHEADER_SIGNATURE_COLUMN_ATTRS,
+    SAS_COMPRESSION_ROW_ALT, SAS_COMPRESSION_TRUNC, SAS_SUBHEADER_SIGNATURE_COLUMN_ATTRS,
     SAS_SUBHEADER_SIGNATURE_COLUMN_FORMAT, SAS_SUBHEADER_SIGNATURE_COLUMN_LIST,
     SAS_SUBHEADER_SIGNATURE_COLUMN_MASK, SAS_SUBHEADER_SIGNATURE_COLUMN_NAME,
     SAS_SUBHEADER_SIGNATURE_COLUMN_SIZE, SAS_SUBHEADER_SIGNATURE_COLUMN_TEXT,
     SAS_SUBHEADER_SIGNATURE_COUNTS, SAS_SUBHEADER_SIGNATURE_ROW_SIZE,
+    SAS7BDAT_COMPRESSION_SIGNATURE_RDC, SAS7BDAT_COMPRESSION_SIGNATURE_RLE,
 };
 use super::contracts::{
     self, ColumnKind, ColumnMetadata, CompressionMode, Endianness, SasColumn, SasMetadata,
@@ -16,49 +20,6 @@ use super::{
     ParserError, SasLayout, UnsupportedFeature, byte_at, decode_text_bytes, ensure_len, read_u16,
     read_u32,
 };
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SasSubheaderSignature {
-    RowSize,
-    ColumnSize,
-    Counts,
-    ColumnFormat,
-    ColumnMask,
-    ColumnAttrs,
-    ColumnText,
-    ColumnList,
-    ColumnName,
-    Unknown(u32),
-}
-
-impl SasSubheaderSignature {
-    pub fn from_raw(signature: u32) -> Self {
-        match signature {
-            SAS_SUBHEADER_SIGNATURE_ROW_SIZE => Self::RowSize,
-            SAS_SUBHEADER_SIGNATURE_COLUMN_SIZE => Self::ColumnSize,
-            SAS_SUBHEADER_SIGNATURE_COUNTS => Self::Counts,
-            SAS_SUBHEADER_SIGNATURE_COLUMN_FORMAT => Self::ColumnFormat,
-            SAS_SUBHEADER_SIGNATURE_COLUMN_ATTRS => Self::ColumnAttrs,
-            SAS_SUBHEADER_SIGNATURE_COLUMN_TEXT => Self::ColumnText,
-            SAS_SUBHEADER_SIGNATURE_COLUMN_LIST => Self::ColumnList,
-            SAS_SUBHEADER_SIGNATURE_COLUMN_NAME => Self::ColumnName,
-            other
-                if (other & SAS_SUBHEADER_SIGNATURE_COLUMN_MASK)
-                    == SAS_SUBHEADER_SIGNATURE_COLUMN_MASK =>
-            {
-                Self::ColumnMask
-            }
-            other => Self::Unknown(other),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, Default)]
-struct TextRef {
-    index: u16,
-    offset: usize,
-    length: usize,
-}
 
 #[derive(Debug, Clone, Default)]
 struct ColumnMetadataState {
@@ -71,90 +32,6 @@ struct ColumnMetadataState {
     format_width: Option<u16>,
     format_digits: Option<u16>,
     informat_name: Option<String>,
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct SasMetadataAccumulator {
-    table_name: String,
-    file_label: String,
-    row_count: usize,
-    row_length: usize,
-    page_row_count: usize,
-    page_size: usize,
-    page_count: usize,
-    text_encoding_code: u8,
-    declared_column_count: Option<usize>,
-    parsed_name_count: usize,
-    parsed_attr_count: usize,
-    parsed_format_count: usize,
-    text_blobs: Vec<Vec<u8>>,
-    columns: Vec<ColumnMetadataState>,
-    compression: CompressionMode,
-}
-
-impl SasMetadataAccumulator {
-    pub(crate) fn new(
-        table_name: String,
-        page_size: usize,
-        page_count: usize,
-        text_encoding_code: u8,
-    ) -> Self {
-        Self {
-            table_name,
-            file_label: String::new(),
-            row_count: 0,
-            row_length: 0,
-            page_row_count: 0,
-            page_size,
-            page_count,
-            text_encoding_code,
-            declared_column_count: None,
-            parsed_name_count: 0,
-            parsed_attr_count: 0,
-            parsed_format_count: 0,
-            text_blobs: Vec::new(),
-            columns: Vec::new(),
-            compression: CompressionMode::None,
-        }
-    }
-
-    pub(crate) fn compression(&self) -> CompressionMode {
-        self.compression
-    }
-
-    pub(crate) fn page_row_count(&self) -> usize {
-        self.page_row_count
-    }
-
-    pub(crate) fn row_length(&self) -> usize {
-        self.row_length
-    }
-
-    pub(crate) fn into_metadata(self, layout: SasLayout) -> Result<SasMetadata, ParserError> {
-        let columns = finalize_columns(&self)?;
-        Ok(SasMetadata {
-            subset: contracts::supported_subset(
-                layout.word_size,
-                layout.endianness,
-                self.compression,
-            ),
-            table_name: self.table_name,
-            file_label: self.file_label,
-            row_count: self.row_count,
-            row_length: self.row_length,
-            page_size: self.page_size,
-            page_count: self.page_count,
-            columns,
-        })
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
-struct SasSubheaderPointer {
-    offset: usize,
-    len: usize,
-    compression: u8,
-    is_compressed_data: bool,
 }
 
 #[derive(Debug, Default)]
@@ -306,8 +183,8 @@ fn parse_row_size_subheader(
             metadata.text_encoding_code,
         )?;
         metadata.compression = match compression.as_str() {
-            SAS_COMPRESSION_SIGNATURE_RLE => CompressionMode::Row,
-            SAS_COMPRESSION_SIGNATURE_RDC => CompressionMode::Binary,
+            SAS7BDAT_COMPRESSION_SIGNATURE_RLE => CompressionMode::Row,
+            SAS7BDAT_COMPRESSION_SIGNATURE_RDC => CompressionMode::Binary,
             _ => CompressionMode::Unknown(0xFF),
         };
     }

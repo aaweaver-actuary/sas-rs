@@ -91,7 +91,8 @@ impl SasFileHeader {
         })
     }
 
-    pub(crate) fn validate_file_len(&self, file_len: usize) -> Result<(), ParserError> {
+
+    pub fn validate_file_len(&self, file_len: usize) -> Result<(), ParserError> {
         let expected_len = self
             .header_size
             .checked_add(self.page_size.saturating_mul(self.page_count))
