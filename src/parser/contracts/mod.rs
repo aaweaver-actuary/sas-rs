@@ -1,3 +1,26 @@
+pub mod column_kind;
+pub mod column_metadata;
+pub mod compression_mode;
+pub mod endianness;
+pub mod numeric_value;
+pub mod parsed_row;
+pub mod parsed_sas7bdat;
+pub mod parsed_value;
+pub mod parser_data_source;
+pub mod parser_input;
+pub mod row_batch;
+pub mod sas_column;
+pub mod sas_metadata;
+pub mod sas_missing_tag;
+pub mod semantic_type_hint;
+pub mod supported_subset_const;
+pub mod supported_subset_fn;
+pub mod supported_subset_name_const;
+pub mod supported_subset_type;
+pub mod types;
+pub mod unsupported_feature;
+pub mod word_size;
+
 pub use super::UnsupportedFeature;
 
 use std::collections::VecDeque;
@@ -6,8 +29,6 @@ use std::io::{Cursor, Read, Seek};
 pub trait ParserDataSource: Read + Seek + Send {}
 
 impl<T> ParserDataSource for T where T: Read + Seek + Send {}
-
-pub type BoxedParserDataSource = Box<dyn ParserDataSource>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WordSize {
@@ -38,65 +59,65 @@ pub struct SupportedSubset {
 }
 
 pub const SUPPORTED_SUBSET_NAME: &str = "sas7bdat-64le-uncompressed-v1";
-const SUPPORTED_SUBSET_NAME_32LE: &str = "sas7bdat-32le-uncompressed-v1";
-const SUPPORTED_SUBSET_NAME_32BE: &str = "sas7bdat-32be-uncompressed-v1";
-const SUPPORTED_SUBSET_NAME_64BE: &str = "sas7bdat-64be-uncompressed-v1";
-const SUPPORTED_SUBSET_NAME_32LE_ROW: &str = "sas7bdat-32le-row-compressed-v1";
-const SUPPORTED_SUBSET_NAME_32BE_ROW: &str = "sas7bdat-32be-row-compressed-v1";
-const SUPPORTED_SUBSET_NAME_64LE_ROW: &str = "sas7bdat-64le-row-compressed-v1";
-const SUPPORTED_SUBSET_NAME_64BE_ROW: &str = "sas7bdat-64be-row-compressed-v1";
-const SUPPORTED_SUBSET_NAME_32LE_BINARY: &str = "sas7bdat-32le-binary-compressed-v1";
-const SUPPORTED_SUBSET_NAME_32BE_BINARY: &str = "sas7bdat-32be-binary-compressed-v1";
-const SUPPORTED_SUBSET_NAME_64LE_BINARY: &str = "sas7bdat-64le-binary-compressed-v1";
-const SUPPORTED_SUBSET_NAME_64BE_BINARY: &str = "sas7bdat-64be-binary-compressed-v1";
-const SUPPORTED_SUBSET_NAME_32LE_UNKNOWN: &str = "sas7bdat-32le-unknown-compression-v1";
-const SUPPORTED_SUBSET_NAME_32BE_UNKNOWN: &str = "sas7bdat-32be-unknown-compression-v1";
-const SUPPORTED_SUBSET_NAME_64LE_UNKNOWN: &str = "sas7bdat-64le-unknown-compression-v1";
-const SUPPORTED_SUBSET_NAME_64BE_UNKNOWN: &str = "sas7bdat-64be-unknown-compression-v1";
+
+const UNCOMPRESSED_SUPPORTED_SUBSET_NAMES: [[&str; 2]; 2] = [
+    [
+        "sas7bdat-32le-uncompressed-v1",
+        "sas7bdat-32be-uncompressed-v1",
+    ],
+    [SUPPORTED_SUBSET_NAME, "sas7bdat-64be-uncompressed-v1"],
+];
+const ROW_COMPRESSED_SUPPORTED_SUBSET_NAMES: [[&str; 2]; 2] = [
+    [
+        "sas7bdat-32le-row-compressed-v1",
+        "sas7bdat-32be-row-compressed-v1",
+    ],
+    [
+        "sas7bdat-64le-row-compressed-v1",
+        "sas7bdat-64be-row-compressed-v1",
+    ],
+];
+const BINARY_COMPRESSED_SUPPORTED_SUBSET_NAMES: [[&str; 2]; 2] = [
+    [
+        "sas7bdat-32le-binary-compressed-v1",
+        "sas7bdat-32be-binary-compressed-v1",
+    ],
+    [
+        "sas7bdat-64le-binary-compressed-v1",
+        "sas7bdat-64be-binary-compressed-v1",
+    ],
+];
+const UNKNOWN_COMPRESSION_SUPPORTED_SUBSET_NAMES: [[&str; 2]; 2] = [
+    [
+        "sas7bdat-32le-unknown-compression-v1",
+        "sas7bdat-32be-unknown-compression-v1",
+    ],
+    [
+        "sas7bdat-64le-unknown-compression-v1",
+        "sas7bdat-64be-unknown-compression-v1",
+    ],
+];
 
 fn supported_subset_name(
     word_size: WordSize,
     endianness: Endianness,
     compression: CompressionMode,
 ) -> &'static str {
-    match (word_size, endianness, compression) {
-        (WordSize::Bit32, Endianness::Little, CompressionMode::None) => SUPPORTED_SUBSET_NAME_32LE,
-        (WordSize::Bit32, Endianness::Big, CompressionMode::None) => SUPPORTED_SUBSET_NAME_32BE,
-        (WordSize::Bit64, Endianness::Little, CompressionMode::None) => SUPPORTED_SUBSET_NAME,
-        (WordSize::Bit64, Endianness::Big, CompressionMode::None) => SUPPORTED_SUBSET_NAME_64BE,
-        (WordSize::Bit32, Endianness::Little, CompressionMode::Row) => {
-            SUPPORTED_SUBSET_NAME_32LE_ROW
-        }
-        (WordSize::Bit32, Endianness::Big, CompressionMode::Row) => SUPPORTED_SUBSET_NAME_32BE_ROW,
-        (WordSize::Bit64, Endianness::Little, CompressionMode::Row) => {
-            SUPPORTED_SUBSET_NAME_64LE_ROW
-        }
-        (WordSize::Bit64, Endianness::Big, CompressionMode::Row) => SUPPORTED_SUBSET_NAME_64BE_ROW,
-        (WordSize::Bit32, Endianness::Little, CompressionMode::Binary) => {
-            SUPPORTED_SUBSET_NAME_32LE_BINARY
-        }
-        (WordSize::Bit32, Endianness::Big, CompressionMode::Binary) => {
-            SUPPORTED_SUBSET_NAME_32BE_BINARY
-        }
-        (WordSize::Bit64, Endianness::Little, CompressionMode::Binary) => {
-            SUPPORTED_SUBSET_NAME_64LE_BINARY
-        }
-        (WordSize::Bit64, Endianness::Big, CompressionMode::Binary) => {
-            SUPPORTED_SUBSET_NAME_64BE_BINARY
-        }
-        (WordSize::Bit32, Endianness::Little, CompressionMode::Unknown(_)) => {
-            SUPPORTED_SUBSET_NAME_32LE_UNKNOWN
-        }
-        (WordSize::Bit32, Endianness::Big, CompressionMode::Unknown(_)) => {
-            SUPPORTED_SUBSET_NAME_32BE_UNKNOWN
-        }
-        (WordSize::Bit64, Endianness::Little, CompressionMode::Unknown(_)) => {
-            SUPPORTED_SUBSET_NAME_64LE_UNKNOWN
-        }
-        (WordSize::Bit64, Endianness::Big, CompressionMode::Unknown(_)) => {
-            SUPPORTED_SUBSET_NAME_64BE_UNKNOWN
-        }
-    }
+    let word_size_index = match word_size {
+        WordSize::Bit32 => 0,
+        WordSize::Bit64 => 1,
+    };
+    let endianness_index = match endianness {
+        Endianness::Little => 0,
+        Endianness::Big => 1,
+    };
+    let table = match compression {
+        CompressionMode::None => UNCOMPRESSED_SUPPORTED_SUBSET_NAMES,
+        CompressionMode::Row => ROW_COMPRESSED_SUPPORTED_SUBSET_NAMES,
+        CompressionMode::Binary => BINARY_COMPRESSED_SUPPORTED_SUBSET_NAMES,
+        CompressionMode::Unknown(_) => UNKNOWN_COMPRESSION_SUPPORTED_SUBSET_NAMES,
+    };
+    table[word_size_index][endianness_index]
 }
 
 pub fn supported_subset(

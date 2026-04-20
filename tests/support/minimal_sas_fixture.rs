@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 
 use sas_rs::parser::contracts::{Endianness, WordSize};
+use sas_rs::parser::{ParserConstants, SasLayout};
 use std::cmp;
 use std::fs;
 use std::io::{Cursor, Read, Seek, SeekFrom};
@@ -17,110 +18,9 @@ const PAGE_COUNT_OFFSET: usize = 204;
 const HEADER_PREFIX_LEN: usize = PAGE_COUNT_OFFSET + 8 + 4;
 const ROW_SIZE_SUBHEADER_LEN: usize = 808;
 
-const MAGIC_NUMBER: [u8; 32] = [
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xc2, 0xea, 0x81, 0x60,
-    0xb3, 0x14, 0x11, 0xcf, 0xbd, 0x92, 0x08, 0x00, 0x09, 0xc7, 0x31, 0x8c, 0x18, 0x1f, 0x10, 0x11,
-];
+const SHARED_PARSER_CONSTANTS: ParserConstants = ParserConstants::shared();
 
-const SAS_ALIGNMENT_OFFSET_4: u8 = 0x33;
-const SAS_ALIGNMENT_OFFSET_0: u8 = 0x22;
-const SAS_ENDIAN_BIG: u8 = 0x00;
-const SAS_ENDIAN_LITTLE: u8 = 0x01;
-
-const SAS_PAGE_TYPE_META: u16 = 0x0000;
-const SAS_PAGE_TYPE_DATA: u16 = 0x0100;
-const SAS_PAGE_TYPE_MIX: u16 = 0x0200;
-
-const SAS_SUBHEADER_SIGNATURE_ROW_SIZE: u32 = 0xF7F7F7F7;
-const SAS_SUBHEADER_SIGNATURE_COLUMN_SIZE: u32 = 0xF6F6F6F6;
-const SAS_SUBHEADER_SIGNATURE_COLUMN_TEXT: u32 = 0xFFFFFFFD;
-const SAS_SUBHEADER_SIGNATURE_COLUMN_NAME: u32 = 0xFFFFFFFF;
-const SAS_SUBHEADER_SIGNATURE_COLUMN_ATTRS: u32 = 0xFFFFFFFC;
-const SAS_SUBHEADER_SIGNATURE_COLUMN_FORMAT: u32 = 0xFFFFFBFE;
-
-const SAS_COLUMN_TYPE_NUM: u8 = 0x01;
-const SAS_COLUMN_TYPE_CHR: u8 = 0x02;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct FixtureLayout {
-    pub word_size: WordSize,
-    pub endianness: Endianness,
-}
-
-impl FixtureLayout {
-    pub const fn bit64_little() -> Self {
-        Self {
-            word_size: WordSize::Bit64,
-            endianness: Endianness::Little,
-        }
-    }
-
-    pub const fn bit64_big() -> Self {
-        Self {
-            word_size: WordSize::Bit64,
-            endianness: Endianness::Big,
-        }
-    }
-
-    pub const fn bit32_little() -> Self {
-        Self {
-            word_size: WordSize::Bit32,
-            endianness: Endianness::Little,
-        }
-    }
-
-    fn word_size_bytes(self) -> usize {
-        match self.word_size {
-            WordSize::Bit32 => 4,
-            WordSize::Bit64 => 8,
-        }
-    }
-
-    fn page_header_size(self) -> usize {
-        match self.word_size {
-            WordSize::Bit32 => 24,
-            WordSize::Bit64 => 40,
-        }
-    }
-
-    fn subheader_pointer_size(self) -> usize {
-        match self.word_size {
-            WordSize::Bit32 => 12,
-            WordSize::Bit64 => 24,
-        }
-    }
-
-    fn subheader_data_offset(self) -> usize {
-        match self.word_size {
-            WordSize::Bit32 => 4,
-            WordSize::Bit64 => 8,
-        }
-    }
-
-    fn column_attrs_entry_size(self) -> usize {
-        self.word_size_bytes() + 8
-    }
-
-    fn row_size_offsets(self) -> (usize, usize, usize, usize, usize) {
-        match self.word_size {
-            WordSize::Bit32 => (20, 24, 36, 60, 52),
-            WordSize::Bit64 => (40, 48, 72, 120, 104),
-        }
-    }
-
-    fn numeric_bytes(self, value: f64) -> [u8; 8] {
-        match self.endianness {
-            Endianness::Little => value.to_le_bytes(),
-            Endianness::Big => value.to_be_bytes(),
-        }
-    }
-}
-
-impl Default for FixtureLayout {
-    fn default() -> Self {
-        Self::bit64_little()
-    }
-}
+pub type FixtureLayout = SasLayout;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct FixtureDefinition {
@@ -309,19 +209,29 @@ pub fn row_compressed_mixed_page_fixture_bytes() -> Vec<u8> {
             FixtureValue::String("MNOP".to_string()),
         ],
     ];
-    build_compressed_fixture(&definition, "SASYZCRL", 1, encode_rle_copy_row)
+    build_compressed_fixture(
+        &definition,
+        SHARED_PARSER_CONSTANTS.compression_signatures.row,
+        1,
+        encode_rle_copy_row,
+    )
 }
 
 pub fn binary_compressed_fixture_bytes() -> Vec<u8> {
     let definition = supported_fixture_definition();
-    build_compressed_fixture(&definition, "SASYZCR2", 0, encode_binary_literal_row)
+    build_compressed_fixture(
+        &definition,
+        SHARED_PARSER_CONSTANTS.compression_signatures.binary,
+        0,
+        encode_binary_literal_row,
+    )
 }
 
 pub fn unsupported_page_type_fixture_bytes(page_type: u16) -> Vec<u8> {
     let mut fixture = supported_fixture_bytes();
-    let page_header_size = FixtureLayout::default().page_header_size();
+    let page_header_layout = FixtureLayout::default().page_header_layout();
     write_u16(
-        &mut fixture[HEADER_SIZE + PAGE_SIZE + page_header_size - 8..],
+        &mut fixture[HEADER_SIZE + PAGE_SIZE + page_header_layout.page_type_offset..],
         0,
         page_type,
         FixtureLayout::default().endianness,
@@ -516,30 +426,29 @@ fn row_size_subheader(
     layout: FixtureLayout,
 ) -> Vec<u8> {
     let mut bytes = vec![0_u8; ROW_SIZE_SUBHEADER_LEN];
-    let (
-        row_length_offset,
-        row_count_offset,
-        column_count_offset,
-        page_row_count_offset,
-        page_size_offset,
-    ) = layout.row_size_offsets();
+    let offsets = layout.row_size_layout();
 
     write_u32(
         &mut bytes,
         0,
-        SAS_SUBHEADER_SIGNATURE_ROW_SIZE,
+        SHARED_PARSER_CONSTANTS.subheader_signatures.row_size,
         layout.endianness,
     );
-    write_word(&mut bytes, row_length_offset, row_length as u64, layout);
-    write_word(&mut bytes, row_count_offset, row_count as u64, layout);
-    write_word(&mut bytes, column_count_offset, column_count as u64, layout);
+    write_word(&mut bytes, offsets.row_length, row_length as u64, layout);
+    write_word(&mut bytes, offsets.row_count, row_count as u64, layout);
     write_word(
         &mut bytes,
-        page_row_count_offset,
+        offsets.column_count,
+        column_count as u64,
+        layout,
+    );
+    write_word(
+        &mut bytes,
+        offsets.page_row_count,
         page_row_count as u64,
         layout,
     );
-    write_word(&mut bytes, page_size_offset, PAGE_SIZE as u64, layout);
+    write_word(&mut bytes, offsets.page_size, PAGE_SIZE as u64, layout);
 
     if let Some(text_ref) = compression_ref {
         write_text_ref(
@@ -558,7 +467,7 @@ fn column_size_subheader(column_count: usize, layout: FixtureLayout) -> Vec<u8> 
     write_u32(
         &mut bytes,
         0,
-        SAS_SUBHEADER_SIGNATURE_COLUMN_SIZE,
+        SHARED_PARSER_CONSTANTS.subheader_signatures.column_size,
         layout.endianness,
     );
     write_word(
@@ -576,7 +485,7 @@ fn column_text_subheader(text_blob: &[u8], layout: FixtureLayout) -> Vec<u8> {
     write_u32(
         &mut bytes,
         0,
-        SAS_SUBHEADER_SIGNATURE_COLUMN_TEXT,
+        SHARED_PARSER_CONSTANTS.subheader_signatures.column_text,
         layout.endianness,
     );
     bytes[data_offset..].copy_from_slice(text_blob);
@@ -594,7 +503,7 @@ fn column_name_subheader(column_name_refs: &[TextRef], layout: FixtureLayout) ->
     write_u32(
         &mut bytes,
         0,
-        SAS_SUBHEADER_SIGNATURE_COLUMN_NAME,
+        SHARED_PARSER_CONSTANTS.subheader_signatures.column_name,
         layout.endianness,
     );
     let remainder = subheader_remainder(bytes.len(), layout);
@@ -616,7 +525,7 @@ fn column_attrs_subheader(columns: &[FixtureColumn], layout: FixtureLayout) -> V
     write_u32(
         &mut bytes,
         0,
-        SAS_SUBHEADER_SIGNATURE_COLUMN_ATTRS,
+        SHARED_PARSER_CONSTANTS.subheader_signatures.column_attrs,
         layout.endianness,
     );
     let remainder = subheader_remainder(bytes.len(), layout);
@@ -639,8 +548,8 @@ fn column_attrs_subheader(columns: &[FixtureColumn], layout: FixtureLayout) -> V
             layout.endianness,
         );
         bytes[entry_offset + layout.word_size_bytes() + 6] = match column {
-            FixtureColumn::Numeric { .. } => SAS_COLUMN_TYPE_NUM,
-            FixtureColumn::String { .. } => SAS_COLUMN_TYPE_CHR,
+            FixtureColumn::Numeric { .. } => SHARED_PARSER_CONSTANTS.column_types.numeric,
+            FixtureColumn::String { .. } => SHARED_PARSER_CONSTANTS.column_types.string,
         };
 
         row_offset += column_width(column);
@@ -659,19 +568,22 @@ fn column_format_subheader(
     write_u32(
         &mut bytes,
         0,
-        SAS_SUBHEADER_SIGNATURE_COLUMN_FORMAT,
+        SHARED_PARSER_CONSTANTS.subheader_signatures.column_format,
         layout.endianness,
     );
-    if layout.word_size == WordSize::Bit64 {
+    let format_layout = layout.column_format_layout();
+    if let Some(offset) = format_layout.format_width_offset {
         write_u16(
             &mut bytes,
-            24,
+            offset,
             metadata.format_width.unwrap_or(0),
             layout.endianness,
         );
+    }
+    if let Some(offset) = format_layout.format_digits_offset {
         write_u16(
             &mut bytes,
-            26,
+            offset,
             metadata.format_digits.unwrap_or(0),
             layout.endianness,
         );
@@ -679,10 +591,7 @@ fn column_format_subheader(
     if let Some(text_ref) = refs.format_ref {
         write_text_ref(
             &mut bytes,
-            match layout.word_size {
-                WordSize::Bit64 => 46,
-                WordSize::Bit32 => 34,
-            },
+            format_layout.format_ref_offset,
             text_ref,
             layout.endianness,
         );
@@ -690,10 +599,7 @@ fn column_format_subheader(
     if let Some(text_ref) = refs.label_ref {
         write_text_ref(
             &mut bytes,
-            match layout.word_size {
-                WordSize::Bit64 => 52,
-                WordSize::Bit32 => 40,
-            },
+            format_layout.label_ref_offset,
             text_ref,
             layout.endianness,
         );
@@ -707,20 +613,14 @@ fn write_header(
     page_count: usize,
     layout: FixtureLayout,
 ) {
-    bytes[..32].copy_from_slice(&MAGIC_NUMBER);
-    bytes[32] = match layout.word_size {
-        WordSize::Bit32 => SAS_ALIGNMENT_OFFSET_0,
-        WordSize::Bit64 => SAS_ALIGNMENT_OFFSET_4,
-    };
+    bytes[..32].copy_from_slice(&SHARED_PARSER_CONSTANTS.magic_number);
+    bytes[32] = layout.word_size_marker();
     bytes[35] = if definition.header_alignment_padding {
-        SAS_ALIGNMENT_OFFSET_4
+        SHARED_PARSER_CONSTANTS.layout_flags.bit64
     } else {
-        SAS_ALIGNMENT_OFFSET_0
+        SHARED_PARSER_CONSTANTS.layout_flags.bit32
     };
-    bytes[37] = match layout.endianness {
-        Endianness::Little => SAS_ENDIAN_LITTLE,
-        Endianness::Big => SAS_ENDIAN_BIG,
-    };
+    bytes[37] = layout.endianness_marker();
     bytes[39] = b'1';
     bytes[70] = definition.encoding_code;
     bytes[84..92].copy_from_slice(b"SAS FILE");
@@ -750,28 +650,33 @@ fn write_header(
 
 fn write_meta_page(bytes: &mut [u8], subheaders: &[Vec<u8>], layout: FixtureLayout) {
     bytes.fill(0);
-    let page_header_size = layout.page_header_size();
+    let page_header_layout = layout.page_header_layout();
     write_u16(
         bytes,
-        page_header_size - 8,
-        SAS_PAGE_TYPE_META,
+        page_header_layout.page_type_offset,
+        SHARED_PARSER_CONSTANTS.page_types.meta,
         layout.endianness,
     );
-    write_u16(bytes, page_header_size - 6, 0, layout.endianness);
     write_u16(
         bytes,
-        page_header_size - 4,
+        page_header_layout.block_count_offset,
+        0,
+        layout.endianness,
+    );
+    write_u16(
+        bytes,
+        page_header_layout.subheader_count_offset,
         subheaders.len() as u16,
         layout.endianness,
     );
     write_u16(
         bytes,
-        page_header_size - 2,
+        page_header_layout.page_subheader_count_offset,
         subheaders.len() as u16,
         layout.endianness,
     );
 
-    let mut pointer_offset = page_header_size;
+    let mut pointer_offset = page_header_layout.size;
     let mut data_offset = PAGE_SIZE;
     for subheader in subheaders {
         data_offset -= subheader.len();
@@ -914,33 +819,33 @@ fn encode_binary_literal_row(bytes: &[u8]) -> Vec<u8> {
 
 fn write_subheader_row_page(bytes: &mut [u8], payloads: &[Vec<u8>], layout: FixtureLayout) {
     bytes.fill(0);
-    let page_header_size = layout.page_header_size();
+    let page_header_layout = layout.page_header_layout();
     write_u16(
         bytes,
-        page_header_size - 8,
-        SAS_PAGE_TYPE_META,
+        page_header_layout.page_type_offset,
+        SHARED_PARSER_CONSTANTS.page_types.meta,
         layout.endianness,
     );
     write_u16(
         bytes,
-        page_header_size - 6,
+        page_header_layout.block_count_offset,
         payloads.len() as u16,
         layout.endianness,
     );
     write_u16(
         bytes,
-        page_header_size - 4,
+        page_header_layout.subheader_count_offset,
         payloads.len() as u16,
         layout.endianness,
     );
     write_u16(
         bytes,
-        page_header_size - 2,
+        page_header_layout.page_subheader_count_offset,
         payloads.len() as u16,
         layout.endianness,
     );
 
-    let mut pointer_offset = page_header_size;
+    let mut pointer_offset = page_header_layout.size;
     let mut data_offset = PAGE_SIZE;
     for payload in payloads {
         data_offset -= payload.len();
@@ -965,24 +870,34 @@ fn write_mix_page(
     layout: FixtureLayout,
 ) {
     bytes.fill(0);
-    let page_header_size = layout.page_header_size();
+    let page_header_layout = layout.page_header_layout();
     write_u16(
         bytes,
-        page_header_size - 8,
-        SAS_PAGE_TYPE_MIX,
+        page_header_layout.page_type_offset,
+        SHARED_PARSER_CONSTANTS.page_types.mix,
         layout.endianness,
     );
     write_u16(
         bytes,
-        page_header_size - 6,
+        page_header_layout.block_count_offset,
         rows.len() as u16,
         layout.endianness,
     );
-    write_u16(bytes, page_header_size - 4, 0, layout.endianness);
-    write_u16(bytes, page_header_size - 2, 0, layout.endianness);
+    write_u16(
+        bytes,
+        page_header_layout.subheader_count_offset,
+        0,
+        layout.endianness,
+    );
+    write_u16(
+        bytes,
+        page_header_layout.page_subheader_count_offset,
+        0,
+        layout.endianness,
+    );
 
     let row_length = columns.iter().map(column_width).sum::<usize>();
-    let mut row_offset = page_header_size;
+    let mut row_offset = page_header_layout.size;
     for row in rows {
         let row_slice = &mut bytes[row_offset..row_offset + row_length];
         write_row(row_slice, row, columns, layout);
@@ -997,22 +912,22 @@ fn write_data_page(
     layout: FixtureLayout,
 ) {
     bytes.fill(0);
-    let page_header_size = layout.page_header_size();
+    let page_header_layout = layout.page_header_layout();
     write_u16(
         bytes,
-        page_header_size - 8,
-        SAS_PAGE_TYPE_DATA,
+        page_header_layout.page_type_offset,
+        SHARED_PARSER_CONSTANTS.page_types.data,
         layout.endianness,
     );
     write_u16(
         bytes,
-        page_header_size - 6,
+        page_header_layout.block_count_offset,
         rows.len() as u16,
         layout.endianness,
     );
 
     let row_length = columns.iter().map(column_width).sum::<usize>();
-    let mut row_offset = page_header_size;
+    let mut row_offset = page_header_layout.size;
     for row in rows {
         let row_slice = &mut bytes[row_offset..row_offset + row_length];
         write_row(row_slice, row, columns, layout);

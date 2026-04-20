@@ -2,10 +2,9 @@
 mod minimal_sas_fixture;
 
 use sas_rs::validation::{
-    CorpusFixtureStatus, ProbeFailureKind, RegressionExpectation,
-    classify_sample_corpus_fixture, differential_fixture_specs,
-    expected_invalid_sample_fixtures, probe_file, real_regression_cases, sample_corpus_root,
-    sweep_sample_corpus,
+    CorpusFixtureStatus, ProbeFailureKind, RegressionExpectation, classify_sample_corpus_fixture,
+    differential_fixture_specs, expected_invalid_sample_fixtures, probe_file,
+    real_regression_cases, sample_corpus_root, sweep_sample_corpus,
 };
 
 #[test]
@@ -104,15 +103,21 @@ fn invalid_sample_fixture_policy_is_explicit_and_reviewable() {
 
     assert_eq!(fixtures.len(), 18);
     assert!(
-        fixtures.iter().any(|fixture| fixture.file_name == "FileFromJMP.sas7bdat"),
+        fixtures
+            .iter()
+            .any(|fixture| fixture.file_name == "FileFromJMP.sas7bdat"),
         "missing-magic fixtures should stay explicitly listed"
     );
     assert!(
-        fixtures.iter().any(|fixture| fixture.file_name == "corrupt.sas7bdat"),
+        fixtures
+            .iter()
+            .any(|fixture| fixture.file_name == "corrupt.sas7bdat"),
         "the malformed header fixture should stay explicitly listed"
     );
     assert!(
-        fixtures.iter().any(|fixture| fixture.file_name == "zero_variables.sas7bdat"),
+        fixtures
+            .iter()
+            .any(|fixture| fixture.file_name == "zero_variables.sas7bdat"),
         "the missing-row-size fixture should stay explicitly listed"
     );
 }

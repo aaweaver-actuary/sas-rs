@@ -1,3 +1,14 @@
+pub mod local_parquet_sink;
+pub mod parquet_sink;
+pub mod parquet_sink_error;
+pub mod parquet_sink_plan;
+pub mod parquet_sink_report;
+pub mod parquet_sink_status;
+pub mod streaming_parquet_sink;
+pub mod stub_parquet_sink;
+pub mod transform_execution;
+pub mod transform_execution_error;
+
 use std::collections::HashMap;
 use std::error::Error;
 use std::fmt::{self, Display, Formatter};
@@ -7,11 +18,11 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use arrow_array::{
     ArrayRef, Date32Array, DurationMicrosecondArray, Float64Array, RecordBatch, StringArray,
-    Time64MicrosecondArray, TimestampMicrosecondArray,
+    Time64MicrosecondArray, TimestampMicrosecondArray, builder::StringBuilder,
 };
 use arrow_schema::{DataType, Field, Schema, TimeUnit};
 use parquet::arrow::ArrowWriter;
-use parquet::file::properties::WriterProperties;
+use parquet::file::properties::{EnabledStatistics, WriterProperties};
 use rayon::prelude::*;
 use rayon::{ThreadPool, ThreadPoolBuilder};
 
@@ -519,6 +530,7 @@ struct TypedBatchChunk {
 enum TypedColumn {
     Float64(Vec<Option<f64>>),
     Utf8(Vec<Option<String>>),
+    MissingTag(Vec<u8>),
     Date32(Vec<Option<i32>>),
     Time64Microsecond(Vec<Option<i64>>),
     TimestampMicrosecond(Vec<Option<i64>>),
@@ -529,9 +541,8 @@ impl TypedColumn {
     fn with_capacity(kind: ProjectionKind, capacity: usize) -> Self {
         match kind {
             ProjectionKind::Float64 => Self::Float64(Vec::with_capacity(capacity)),
-            ProjectionKind::Utf8 | ProjectionKind::MissingTagUtf8 => {
-                Self::Utf8(Vec::with_capacity(capacity))
-            }
+            ProjectionKind::Utf8 => Self::Utf8(Vec::with_capacity(capacity)),
+            ProjectionKind::MissingTagUtf8 => Self::MissingTag(Vec::with_capacity(capacity)),
             ProjectionKind::Date32 => Self::Date32(Vec::with_capacity(capacity)),
             ProjectionKind::Time64Microsecond => {
                 Self::Time64Microsecond(Vec::with_capacity(capacity))
@@ -561,24 +572,40 @@ impl TypedColumn {
                 Ok(())
             }
             (Self::Time64Microsecond(values), ParsedValue::Numeric(numeric)) => {
-                values.push(materialized_time64_micros(numeric, column_name, endianness)?);
+                values.push(materialized_time64_micros(
+                    numeric,
+                    column_name,
+                    endianness,
+                )?);
                 Ok(())
             }
             (Self::TimestampMicrosecond(values), ParsedValue::Numeric(numeric)) => {
-                values.push(materialized_timestamp_micros(numeric, column_name, endianness)?);
+                values.push(materialized_timestamp_micros(
+                    numeric,
+                    column_name,
+                    endianness,
+                )?);
                 Ok(())
             }
             (Self::DurationMicrosecond(values), ParsedValue::Numeric(numeric)) => {
-                values.push(materialized_duration_micros(numeric, column_name, endianness)?);
+                values.push(materialized_duration_micros(
+                    numeric,
+                    column_name,
+                    endianness,
+                )?);
                 Ok(())
             }
             (Self::Utf8(values), ParsedValue::String(value)) => {
                 values.push(Some(value.clone()));
                 Ok(())
             }
-            (Self::Utf8(values), ParsedValue::Numeric(numeric)) => {
-                let (_, missing_tag) = materialized_numeric_parts(numeric, column_name, endianness)?;
-                values.push(missing_tag.map(|tag| tag.code().to_string()));
+            (Self::Utf8(_), ParsedValue::Numeric(_)) => Err(TransformExecutionError::new(format!(
+                "column {column_name} expected a string value"
+            ))),
+            (Self::MissingTag(values), ParsedValue::Numeric(numeric)) => {
+                let (_, missing_tag) =
+                    materialized_numeric_parts(numeric, column_name, endianness)?;
+                values.push(missing_tag.map_or(0, |tag| tag.code() as u8));
                 Ok(())
             }
             (_, ParsedValue::String(_)) => Err(TransformExecutionError::new(format!(
@@ -593,6 +620,9 @@ impl TypedColumn {
                 values.append(&mut other_values)
             }
             (Self::Utf8(values), Self::Utf8(mut other_values)) => values.append(&mut other_values),
+            (Self::MissingTag(values), Self::MissingTag(mut other_values)) => {
+                values.append(&mut other_values)
+            }
             (Self::Date32(values), Self::Date32(mut other_values)) => {
                 values.append(&mut other_values)
             }
@@ -801,11 +831,8 @@ impl FilterPredicate {
         })?;
         match (&self.literal, value) {
             (FilterLiteral::Numeric(expected), ParsedValue::Numeric(numeric)) => {
-                let (actual, _) = materialized_numeric_parts(
-                    numeric,
-                    &self.column_name,
-                    self.source_endianness,
-                )?;
+                let (actual, _) =
+                    materialized_numeric_parts(numeric, &self.column_name, self.source_endianness)?;
                 Ok(self.operator.apply_numeric(actual, *expected))
             }
             (FilterLiteral::Utf8(expected), ParsedValue::String(actual)) => self
@@ -952,6 +979,43 @@ fn default_worker_threads() -> usize {
         .unwrap_or(1)
 }
 
+const WIDE_SCHEMA_PARQUET_STATISTICS_ONLY_COLUMN_THRESHOLD: usize = 4_096;
+const WIDE_SCHEMA_PARQUET_DICTIONARY_AND_STATISTICS_THRESHOLD: usize = 16_384;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WideSchemaParquetStrategy {
+    Default,
+    DisableStatisticsOnly,
+    DisableDictionaryAndStatistics,
+}
+
+fn wide_schema_parquet_strategy(column_count: usize) -> WideSchemaParquetStrategy {
+    if column_count >= WIDE_SCHEMA_PARQUET_DICTIONARY_AND_STATISTICS_THRESHOLD {
+        WideSchemaParquetStrategy::DisableDictionaryAndStatistics
+    } else if column_count >= WIDE_SCHEMA_PARQUET_STATISTICS_ONLY_COLUMN_THRESHOLD {
+        WideSchemaParquetStrategy::DisableStatisticsOnly
+    } else {
+        WideSchemaParquetStrategy::Default
+    }
+}
+
+fn parquet_writer_properties(row_group_rows: usize, column_count: usize) -> WriterProperties {
+    match wide_schema_parquet_strategy(column_count) {
+        WideSchemaParquetStrategy::Default => WriterProperties::builder()
+            .set_max_row_group_row_count(Some(row_group_rows))
+            .build(),
+        WideSchemaParquetStrategy::DisableStatisticsOnly => WriterProperties::builder()
+            .set_max_row_group_row_count(Some(row_group_rows))
+            .set_statistics_enabled(EnabledStatistics::None)
+            .build(),
+        WideSchemaParquetStrategy::DisableDictionaryAndStatistics => WriterProperties::builder()
+            .set_max_row_group_row_count(Some(row_group_rows))
+            .set_dictionary_enabled(false)
+            .set_statistics_enabled(EnabledStatistics::None)
+            .build(),
+    }
+}
+
 fn transform_thread_pool(
     worker_threads: usize,
 ) -> Result<Arc<ThreadPool>, TransformExecutionError> {
@@ -1053,9 +1117,8 @@ impl StreamingParquetSink for LocalParquetSink {
         let schema = Arc::new(build_arrow_schema(execution, &dataset.metadata));
         let file = File::create(&plan.output_path)
             .map_err(|error| ParquetSinkError::new(error.to_string()))?;
-        let properties = WriterProperties::builder()
-            .set_max_row_group_row_count(Some(plan.row_group_rows))
-            .build();
+        let properties =
+            parquet_writer_properties(plan.row_group_rows, execution.output_column_count());
         let mut writer = ArrowWriter::try_new(file, schema.clone(), Some(properties))
             .map_err(|error| ParquetSinkError::new(error.to_string()))?;
         let mut staged_row_count = 0;
@@ -1137,6 +1200,9 @@ fn typed_batch_to_record_batch(batch: TypedBatch, schema: Arc<Schema>) -> Record
         .map(|column| match column {
             TypedColumn::Float64(values) => Arc::new(Float64Array::from(values)) as ArrayRef,
             TypedColumn::Utf8(values) => Arc::new(StringArray::from(values)) as ArrayRef,
+            TypedColumn::MissingTag(values) => {
+                Arc::new(missing_tag_string_array(values)) as ArrayRef
+            }
             TypedColumn::Date32(values) => Arc::new(Date32Array::from(values)) as ArrayRef,
             TypedColumn::Time64Microsecond(values) => {
                 Arc::new(Time64MicrosecondArray::from(values)) as ArrayRef
@@ -1151,6 +1217,24 @@ fn typed_batch_to_record_batch(batch: TypedBatch, schema: Arc<Schema>) -> Record
         .collect::<Vec<_>>();
     RecordBatch::try_new(schema, arrays)
         .expect("typed parquet batches should always match the derived schema")
+}
+
+fn missing_tag_string_array(values: Vec<u8>) -> StringArray {
+    let present_count = values.iter().filter(|value| **value != 0).count();
+    let mut builder = StringBuilder::with_capacity(values.len(), present_count);
+    let mut code_buffer = [0_u8; 4];
+
+    for value in values {
+        if value == 0 {
+            builder.append_null();
+            continue;
+        }
+
+        let encoded = char::from(value).encode_utf8(&mut code_buffer);
+        builder.append_value(encoded);
+    }
+
+    builder.finish()
 }
 
 fn strip_quotes(token: &str) -> &str {
@@ -1257,6 +1341,30 @@ mod tests {
         assert_eq!(
             schema.metadata().get("sas.table_name"),
             Some(&"DATASET".to_string())
+        );
+    }
+
+    #[test]
+    fn wide_schema_parquet_strategy_keeps_default_writer_for_narrower_outputs() {
+        assert_eq!(
+            wide_schema_parquet_strategy(4_095),
+            WideSchemaParquetStrategy::Default
+        );
+    }
+
+    #[test]
+    fn wide_schema_parquet_strategy_disables_only_statistics_for_wide_outputs() {
+        assert_eq!(
+            wide_schema_parquet_strategy(6_680),
+            WideSchemaParquetStrategy::DisableStatisticsOnly
+        );
+    }
+
+    #[test]
+    fn wide_schema_parquet_strategy_keeps_ultra_wide_dictionary_safeguard() {
+        assert_eq!(
+            wide_schema_parquet_strategy(29_282),
+            WideSchemaParquetStrategy::DisableDictionaryAndStatistics
         );
     }
 }

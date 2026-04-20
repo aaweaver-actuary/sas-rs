@@ -1,3 +1,19 @@
+pub mod corpus_fixture_status;
+pub mod corpus_sweep_report;
+pub mod differential_column_kind;
+pub mod differential_column_spec;
+pub mod differential_fixture_result;
+pub mod differential_fixture_spec;
+pub mod differential_report;
+pub mod differential_status;
+pub mod invalid_fixture_case;
+pub mod probe_failure_kind;
+pub mod probe_outcome;
+pub mod probe_result;
+pub mod readable_outcome;
+pub mod regression_case;
+pub mod regression_expectation;
+
 use std::path::PathBuf;
 
 use super::classify_sample_corpus_fixture;
@@ -128,8 +144,7 @@ impl CorpusSweepReport {
         self.results
             .iter()
             .filter(|result| {
-                classify_sample_corpus_fixture(result)
-                    == CorpusFixtureStatus::CompatibilityFailure
+                classify_sample_corpus_fixture(result) == CorpusFixtureStatus::CompatibilityFailure
             })
             .count()
     }

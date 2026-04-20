@@ -193,7 +193,10 @@ fn parser_transform_service_materializes_non_8_byte_numeric_columns_with_filteri
 
     assert_eq!(report.status, TransformStatus::ParquetWritten);
     assert_eq!(report.sink.status, ParquetSinkStatus::ParquetWritten);
-    assert_eq!(read_optional_float64_column(&output_path, 0), vec![Some(42.5)]);
+    assert_eq!(
+        read_optional_float64_column(&output_path, 0),
+        vec![Some(42.5)]
+    );
     assert_eq!(read_optional_utf8_column(&output_path, 1), vec![None]);
     let _ = std::fs::remove_file(output_path);
 }
@@ -239,7 +242,10 @@ fn parser_transform_service_materializes_big_endian_non_8_byte_missing_tags() {
         .expect("big-endian narrow numerics should materialize into parquet output");
 
     assert_eq!(report.status, TransformStatus::ParquetWritten);
-    assert_eq!(read_optional_float64_column(&output_path, 0), vec![Some(7.0), None]);
+    assert_eq!(
+        read_optional_float64_column(&output_path, 0),
+        vec![Some(7.0), None]
+    );
     assert_eq!(
         read_optional_utf8_column(&output_path, 1),
         vec![None, Some("A".to_string())]
@@ -607,7 +613,10 @@ fn truncated_numeric_bytes(
     value: f64,
     width: usize,
 ) -> Vec<u8> {
-    assert!((1..=8).contains(&width), "numeric width must be between 1 and 8 bytes");
+    assert!(
+        (1..=8).contains(&width),
+        "numeric width must be between 1 and 8 bytes"
+    );
     let raw = match layout.endianness {
         Endianness::Little => value.to_le_bytes().to_vec(),
         Endianness::Big => value.to_be_bytes().to_vec(),
@@ -620,7 +629,10 @@ fn truncated_missing_numeric_bytes(
     tag: char,
     width: usize,
 ) -> Vec<u8> {
-    assert!((1..=8).contains(&width), "numeric width must be between 1 and 8 bytes");
+    assert!(
+        (1..=8).contains(&width),
+        "numeric width must be between 1 and 8 bytes"
+    );
     let raw = minimal_sas_fixture::tagged_missing_numeric_bytes(layout, tag);
     truncate_numeric_storage_bytes(raw, layout.endianness, width)
 }

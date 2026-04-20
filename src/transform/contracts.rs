@@ -1,74 +1,36 @@
-use std::path::PathBuf;
+//! Stable request and contract types for the transform layer.
+//!
+//! These types describe what to read, how to decode it, what transform policy
+//! to apply, and where to write the result.
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TransformRequest {
-    pub source: SourceContract,
-    pub decoder: DecoderContract,
-    pub transform: TransformContract,
-    pub sink: SinkContract,
-}
+mod decode_mode;
+mod decoder_contract;
+mod execution_model;
+mod sink_contract;
+mod sink_format;
+mod source_contract;
+mod source_format;
+mod transform_contract;
+mod transform_request;
+mod transform_tuning;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SourceContract {
-    pub path: PathBuf,
-    pub format: SourceFormat,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum SourceFormat {
-    Sas7bdat,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DecoderContract {
-    pub mode: DecodeMode,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum DecodeMode {
-    StreamingPages,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TransformContract {
-    pub selection: Vec<String>,
-    pub filter: Option<String>,
-    pub execution: ExecutionModel,
-    pub tuning: TransformTuning,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TransformTuning {
-    pub batch_size_rows: usize,
-    pub worker_threads: Option<usize>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ExecutionModel {
-    Streaming,
-    BoundedMemory { max_rows_in_memory: usize },
-}
-
-impl ExecutionModel {
-    pub fn label(&self) -> &'static str {
-        match self {
-            Self::Streaming => "streaming",
-            Self::BoundedMemory { .. } => "bounded-memory",
-        }
-    }
-
-    pub fn supports_larger_than_memory_inputs(&self) -> bool {
-        true
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SinkContract {
-    pub path: PathBuf,
-    pub format: SinkFormat,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum SinkFormat {
-    Parquet,
-}
+/// Decoder mode for the supported SAS parser integration.
+pub use decode_mode::DecodeMode;
+/// Decoder-specific request contract.
+pub use decoder_contract::DecoderContract;
+/// Requested execution policy for the transform phase.
+pub use execution_model::ExecutionModel;
+/// Sink destination contract.
+pub use sink_contract::SinkContract;
+/// Output format requested from the sink.
+pub use sink_format::SinkFormat;
+/// Source dataset location contract.
+pub use source_contract::SourceContract;
+/// Input format requested from the source loader.
+pub use source_format::SourceFormat;
+/// Transform-time projection, filter, and execution settings.
+pub use transform_contract::TransformContract;
+/// Full transform request passed through the service boundary.
+pub use transform_request::TransformRequest;
+/// Tuning knobs for batch sizing and worker parallelism.
+pub use transform_tuning::TransformTuning;
