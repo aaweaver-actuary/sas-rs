@@ -5,3 +5,4 @@
 /.tmp
 /.memories
 Cargo.lock
+.github/repomix-output.xml
