@@ -1,7 +1,7 @@
 #[derive(Debug, Clone, Copy)]
-struct SasSubheaderPointer {
-    offset: usize,
-    len: usize,
-    compression: u8,
-    is_compressed_data: bool,
+pub(super) struct SasSubheaderPointer {
+    pub(super) offset: usize,
+    pub(super) len: usize,
+    pub(super) compression: u8,
+    pub(super) is_compressed_data: bool,
 }

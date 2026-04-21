@@ -30,7 +30,7 @@ pub(crate) enum Command {
 }
 
 #[derive(Debug, Clone, Args)]
-struct TransformArgs {
+pub(crate) struct TransformArgs {
     input: PathBuf,
     output: PathBuf,
     #[arg(long, value_delimiter = ',')]

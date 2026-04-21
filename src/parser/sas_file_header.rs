@@ -3,17 +3,32 @@ use crate::parser::constants::SAS7BDAT_MAGIC_NUMBER;
 use super::offsets::ParserOffsets;
 use super::{ParserError, SasLayout, decode_text_bytes, read_u32};
 
+/// Decoded fields from the fixed SAS file header prefix.
+/// Decoded fields from the fixed SAS file header prefix.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SasFileHeader {
+    /// Declared word-size and endianness layout.
+    /// Declared word-size and endianness layout.
     pub layout: SasLayout,
+    /// Source text encoding code stored in the header.
+    /// Source text encoding code stored in the header.
     pub text_encoding_code: u8,
+    /// Header length in bytes.
+    /// Header length in bytes.
     pub header_size: usize,
+    /// Page size in bytes.
+    /// Page size in bytes.
     pub page_size: usize,
+    /// Number of pages declared by the file header.
+    /// Number of pages declared by the file header.
     pub page_count: usize,
+    /// Table name stored in the header.
+    /// Table name stored in the header.
     pub table_name: String,
 }
 
 impl SasFileHeader {
+    /// Decode a `SasFileHeader` from the raw header prefix bytes.
     pub fn from_header_prefix(
         header_prefix: &[u8],
         offsets: &ParserOffsets,
@@ -91,7 +106,8 @@ impl SasFileHeader {
         })
     }
 
-
+    /// Validate that the underlying file length can hold the declared pages.
+    /// Validate that the underlying file length can hold the declared pages.
     pub fn validate_file_len(&self, file_len: usize) -> Result<(), ParserError> {
         let expected_len = self
             .header_size

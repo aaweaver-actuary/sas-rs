@@ -22,6 +22,8 @@
 //! ```
 
 pub mod cli;
+/// Public SAS7BDAT parsing contracts and streaming decode entrypoints.
 pub mod parser;
 pub mod transform;
+/// Fixture-driven validation helpers for corpus sweeps and differential checks.
 pub mod validation;

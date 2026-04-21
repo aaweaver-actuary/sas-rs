@@ -8,13 +8,17 @@ use crate::parser::{
     read_u32, read_u64,
 };
 
+/// Word-size and endianness layout for a SAS7BDAT file.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SasLayout {
+    /// Declared word size for pointer-sized fields in the file.
     pub word_size: WordSize,
+    /// Declared byte order for integer and floating-point fields.
     pub endianness: Endianness,
 }
 
 impl SasLayout {
+    /// Build a layout from explicit word-size and endianness markers.
     pub const fn new(word_size: WordSize, endianness: Endianness) -> Self {
         Self {
             word_size,
@@ -22,18 +26,22 @@ impl SasLayout {
         }
     }
 
+    /// Return the canonical 64-bit little-endian layout used by the primary subset.
     pub const fn bit64_little() -> Self {
         Self::new(WordSize::Bit64, Endianness::Little)
     }
 
+    /// Return the 64-bit big-endian layout.
     pub const fn bit64_big() -> Self {
         Self::new(WordSize::Bit64, Endianness::Big)
     }
 
+    /// Return the 32-bit little-endian layout.
     pub const fn bit32_little() -> Self {
         Self::new(WordSize::Bit32, Endianness::Little)
     }
 
+    /// Decode the SAS word-size marker into a `WordSize`.
     pub const fn word_size_from_marker(marker: u8) -> Option<WordSize> {
         match marker {
             SAS7BDAT_LAYOUT_FLAGS_32 => Some(WordSize::Bit32),
@@ -42,6 +50,7 @@ impl SasLayout {
         }
     }
 
+    /// Decode the SAS endianness marker into an `Endianness`.
     pub const fn endianness_from_marker(marker: u8) -> Option<Endianness> {
         const SAS_ENDIAN_LITTLE: u8 = SAS7BDAT_LITTLE_ENDIAN_CODE;
         const SAS_ENDIAN_BIG: u8 = SAS7BDAT_BIG_ENDIAN_CODE;
@@ -53,6 +62,7 @@ impl SasLayout {
         }
     }
 
+    /// Build a layout from the raw SAS header markers.
     pub const fn from_markers(word_size_marker: u8, endianness_marker: u8) -> Option<Self> {
         let Some(word_size) = Self::word_size_from_marker(word_size_marker) else {
             return None;
@@ -63,6 +73,7 @@ impl SasLayout {
         Some(Self::new(word_size, endianness))
     }
 
+    /// Encode this layout as the SAS word-size marker.
     pub const fn word_size_marker(self) -> u8 {
         match self.word_size {
             WordSize::Bit32 => SAS7BDAT_LAYOUT_FLAGS_32,
@@ -70,6 +81,7 @@ impl SasLayout {
         }
     }
 
+    /// Encode this layout as the SAS endianness marker.
     pub const fn endianness_marker(self) -> u8 {
         match self.endianness {
             Endianness::Little => SAS7BDAT_LITTLE_ENDIAN_CODE,
@@ -77,6 +89,7 @@ impl SasLayout {
         }
     }
 
+    /// Return the pointer width in bytes for this layout.
     pub const fn word_size_bytes(self) -> usize {
         match self.word_size {
             WordSize::Bit32 => 4,
@@ -84,6 +97,7 @@ impl SasLayout {
         }
     }
 
+    /// Return the page-header field offsets for this layout.
     pub const fn page_header_layout(self) -> PageHeaderLayout {
         match self.word_size {
             WordSize::Bit32 => PageHeaderLayout {
@@ -103,10 +117,12 @@ impl SasLayout {
         }
     }
 
+    /// Return the page-header length in bytes for this layout.
     pub const fn page_header_size(self) -> usize {
         self.page_header_layout().size
     }
 
+    /// Return the subheader pointer layout for this file layout.
     pub const fn subheader_layout(self) -> SubheaderLayout {
         match self.word_size {
             WordSize::Bit32 => SubheaderLayout {
@@ -124,22 +140,27 @@ impl SasLayout {
         }
     }
 
+    /// Return the byte width of one subheader pointer entry.
     pub const fn subheader_pointer_size(self) -> usize {
         self.subheader_layout().pointer_size
     }
 
+    /// Return the offset from a pointer entry to the subheader payload.
     pub const fn subheader_data_offset(self) -> usize {
         self.subheader_layout().data_offset
     }
 
+    /// Return the byte width of one column-attributes entry.
     pub const fn column_attrs_entry_size(self) -> usize {
         self.subheader_layout().column_attrs_entry_size
     }
 
+    /// Return the byte width of a raw subheader signature field.
     pub const fn subheader_signature_size(self) -> usize {
         self.subheader_layout().signature_size
     }
 
+    /// Return the offsets used by the row-size subheader under this layout.
     pub const fn row_size_layout(self) -> RowSizeLayout {
         match self.word_size {
             WordSize::Bit32 => RowSizeLayout {
@@ -159,6 +180,7 @@ impl SasLayout {
         }
     }
 
+    /// Return the minimum byte length accepted for the row-size subheader.
     pub const fn row_size_min_len(self) -> usize {
         match self.word_size {
             WordSize::Bit32 => 190,
@@ -166,6 +188,7 @@ impl SasLayout {
         }
     }
 
+    /// Return the offsets used by the column-format subheader under this layout.
     pub const fn column_format_layout(self) -> ColumnFormatLayout {
         match self.word_size {
             WordSize::Bit32 => ColumnFormatLayout {
@@ -192,6 +215,7 @@ impl SasLayout {
         }
     }
 
+    /// Encode a numeric value using the layout endianness.
     pub fn numeric_bytes(self, value: f64) -> [u8; 8] {
         match self.endianness {
             Endianness::Little => value.to_le_bytes(),

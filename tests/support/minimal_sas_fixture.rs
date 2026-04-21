@@ -616,9 +616,9 @@ fn write_header(
     bytes[..32].copy_from_slice(&SHARED_PARSER_CONSTANTS.magic_number);
     bytes[32] = layout.word_size_marker();
     bytes[35] = if definition.header_alignment_padding {
-        SHARED_PARSER_CONSTANTS.layout_flags.bit64
+        4
     } else {
-        SHARED_PARSER_CONSTANTS.layout_flags.bit32
+        0
     };
     bytes[37] = layout.endianness_marker();
     bytes[39] = b'1';

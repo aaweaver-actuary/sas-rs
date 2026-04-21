@@ -1,18 +1,16 @@
 //! Public CLI error type and exit-code mapping.
 
-//! Public CLI error type and exit-code mapping.
-
 /// Error returned by the public CLI entrypoints.
 ///
 /// `CliError` separates argument-parsing failures from downstream transform
 /// failures so callers can preserve the same exit semantics as the binary.
-
 use std::error::Error;
 use std::fmt::{self, Display, Formatter};
 use std::process::ExitCode;
 
 use crate::transform::pipeline::TransformServiceError;
 
+/// Public error returned by CLI entrypoints.
 #[derive(Debug)]
 pub enum CliError {
     /// Clap rejected the supplied command-line arguments.
@@ -27,12 +25,13 @@ impl CliError {
     /// # Examples
     ///
     /// ```
+    /// use std::process::ExitCode;
     /// use sas_rs::cli::{CliError, run};
     ///
     /// let error = run(["sasrs", "--definitely-not-a-real-flag"]).unwrap_err();
     ///
     /// assert!(matches!(error, CliError::Parse(_)));
-    /// assert_ne!(error.exit_code().code(), Some(0));
+    /// assert_ne!(error.exit_code(), ExitCode::SUCCESS);
     /// ```
     pub fn exit_code(&self) -> ExitCode {
         match self {

@@ -3,15 +3,21 @@ use crate::parser::constants::{
     SAS7BDAT_WINDOWS_1252_ENCODING_CODE,
 };
 
+/// SAS text encoding codes recognized by the parser.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Sas7bdatEncoding {
+    /// Default Windows-1252-compatible encoding marker.
     Default,
+    /// UTF-8 encoding marker.
     Utf8,
+    /// Latin-1 encoding marker.
     Latin1,
+    /// Windows-1252 encoding marker.
     Windows1252,
 }
 
 impl Sas7bdatEncoding {
+    /// Return the raw SAS encoding code for this variant.
     pub fn as_code(&self) -> u8 {
         match self {
             Self::Default => SAS7BDAT_DEFAULT_ENCODING_CODE,
@@ -21,6 +27,7 @@ impl Sas7bdatEncoding {
         }
     }
 
+    /// Decode a raw SAS encoding code.
     pub fn from_code(code: u8) -> Option<Self> {
         if code == SAS7BDAT_DEFAULT_ENCODING_CODE {
             Some(Self::Default)
@@ -35,18 +42,22 @@ impl Sas7bdatEncoding {
         }
     }
 
+    /// Report whether this encoding is the default marker.
     pub fn is_default(&self) -> bool {
         matches!(self, Self::Default)
     }
 
+    /// Report whether this encoding is UTF-8.
     pub fn is_utf8(&self) -> bool {
         matches!(self, Self::Utf8)
     }
 
+    /// Report whether this encoding is Latin-1.
     pub fn is_latin1(&self) -> bool {
         matches!(self, Self::Latin1)
     }
 
+    /// Report whether this encoding is Windows-1252.
     pub fn is_windows_1252(&self) -> bool {
         matches!(self, Self::Windows1252)
     }

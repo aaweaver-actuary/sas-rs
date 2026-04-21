@@ -1,6 +1,8 @@
 //! Public command result enum returned by CLI entrypoints.
 
-//! Public command result enum returned by CLI entrypoints.
+use std::fmt::{self, Display, Formatter};
+
+use crate::transform::pipeline::TransformReport;
 
 /// Outcome produced by a public CLI command.
 ///
@@ -46,11 +48,6 @@
 ///
 /// assert!(outcome.to_string().contains("status=not-yet-implemented"));
 /// ```
-
-use std::fmt::{self, Display, Formatter};
-
-use crate::transform::pipeline::TransformReport;
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CommandOutcome {
     /// Result of running the `transform` subcommand.

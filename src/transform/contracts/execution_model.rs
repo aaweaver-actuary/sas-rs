@@ -21,10 +21,14 @@ pub enum ExecutionModel {
     /// Stream batches through the sink without a caller-specified memory cap.
     Streaming,
     /// Keep at most `max_rows_in_memory` decoded rows resident at once.
-    BoundedMemory { max_rows_in_memory: usize },
+    BoundedMemory {
+        /// Maximum number of decoded rows allowed in memory at once.
+        max_rows_in_memory: usize,
+    },
 }
 
 impl ExecutionModel {
+    /// Return the stable machine-readable label for this execution model.
     pub fn label(&self) -> &'static str {
         match self {
             Self::Streaming => "streaming",

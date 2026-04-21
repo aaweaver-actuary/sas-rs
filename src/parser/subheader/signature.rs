@@ -16,21 +16,33 @@ use super::super::constants::{
     SAS7BDAT_COUNTS_SUBHEADER_SIGNATURE_CODE, SAS7BDAT_ROW_SIZE_SUBHEADER_SIGNATURE_CODE,
 };
 
+/// Classified SAS subheader signature.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SasSubheaderSignature {
+    /// Row-size metadata subheader.
     RowSize,
+    /// Column-size metadata subheader.
     ColumnSize,
+    /// Counts metadata subheader.
     Counts,
+    /// Column-format metadata subheader.
     ColumnFormat,
+    /// Column-mask metadata subheader.
     ColumnMask,
+    /// Column-attributes metadata subheader.
     ColumnAttrs,
+    /// Column-text metadata subheader.
     ColumnText,
+    /// Column-list metadata subheader.
     ColumnList,
+    /// Column-name metadata subheader.
     ColumnName,
+    /// Unrecognized subheader signature.
     Unknown(u32),
 }
 
 impl SasSubheaderSignature {
+    /// Classify a raw subheader signature value.
     pub fn from_raw(signature: u32) -> Self {
         match signature {
             SAS7BDAT_ROW_SIZE_SUBHEADER_SIGNATURE_CODE => Self::RowSize,

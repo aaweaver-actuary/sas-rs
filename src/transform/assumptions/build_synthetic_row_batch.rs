@@ -9,7 +9,6 @@
 ///
 /// assert_eq!(batch, vec![0, 1, 2, 3, 4, 5]);
 /// ```
-
 pub fn build_synthetic_row_batch(row_count: usize, column_count: usize) -> Vec<u64> {
     (0..row_count.saturating_mul(column_count))
         .map(|index| index as u64)

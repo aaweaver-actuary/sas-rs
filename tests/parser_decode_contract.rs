@@ -2,8 +2,8 @@
 mod minimal_sas_fixture;
 
 use sas_rs::parser::contracts::{
-    ColumnKind, ColumnMetadata, NumericValue, ParsedValue, ParserInput, SasMissingTag,
-    SemanticTypeHint,
+    ColumnKind, ColumnMetadata, NumericValue, ParsedValue, ParserInput, RowValueKind,
+    SasMissingTag, SemanticTypeHint,
 };
 use sas_rs::parser::{Sas7bdatParser, SupportedSas7bdatParser};
 use std::fs::File;
@@ -100,8 +100,12 @@ fn drain_all_rows(
 
 fn numeric_missing_tag(value: &ParsedValue) -> Option<SasMissingTag> {
     match value {
-        ParsedValue::Numeric(numeric) => numeric.missing_tag(),
-        ParsedValue::String(_) => None,
+        ParsedValue::Numeric(numeric)
+        | ParsedValue::Date(numeric)
+        | ParsedValue::Time(numeric)
+        | ParsedValue::DateTime(numeric)
+        | ParsedValue::Duration(numeric) => numeric.missing_tag(),
+        ParsedValue::Character(_) => None,
     }
 }
 
@@ -151,20 +155,42 @@ fn parser_decodes_metadata_and_batches_from_the_supported_subset_fixture() {
         .next_batch(2)
         .expect("batch decoding should succeed")
         .expect("expected a first batch");
+    assert_eq!(first_batch.schema.table_name, "DATASET");
+    assert_eq!(first_batch.schema.file_label, "");
+    assert_eq!(first_batch.schema.columns.len(), 2);
+    assert_eq!(first_batch.schema.columns[0].source_index, 0);
+    assert_eq!(first_batch.schema.columns[0].name, "customer_id");
+    assert_eq!(
+        first_batch.schema.columns[0].value_kind,
+        RowValueKind::Numeric
+    );
+    assert_eq!(
+        first_batch.schema.columns[0]
+            .missing_tag_column_name
+            .as_deref(),
+        Some("customer_id__sas_missing_tag")
+    );
+    assert_eq!(first_batch.schema.columns[1].source_index, 1);
+    assert_eq!(first_batch.schema.columns[1].name, "code");
+    assert_eq!(
+        first_batch.schema.columns[1].value_kind,
+        RowValueKind::Character
+    );
+    assert_eq!(first_batch.schema.columns[1].missing_tag_column_name, None);
     assert_eq!(first_batch.row_index_start, 0);
     assert_eq!(first_batch.rows.len(), 2);
     assert_eq!(
         first_batch.rows[0].values,
         vec![
             ParsedValue::Numeric(1.0.into()),
-            ParsedValue::String("ABCD".to_string()),
+            ParsedValue::Character("ABCD".to_string()),
         ]
     );
     assert_eq!(
         first_batch.rows[1].values,
         vec![
             ParsedValue::Numeric(2.5.into()),
-            ParsedValue::String("EFGH".to_string()),
+            ParsedValue::Character("EFGH".to_string()),
         ]
     );
 
@@ -178,7 +204,7 @@ fn parser_decodes_metadata_and_batches_from_the_supported_subset_fixture() {
         second_batch.rows[0].values,
         vec![
             ParsedValue::Numeric(3.0.into()),
-            ParsedValue::String("IJKL".to_string()),
+            ParsedValue::Character("IJKL".to_string()),
         ]
     );
 
@@ -238,7 +264,7 @@ fn parser_decodes_latin1_strings_without_claiming_utf8_only_support() {
         batch.rows[0].values,
         vec![
             ParsedValue::Numeric(1.0.into()),
-            ParsedValue::String("Caf\u{00E9}".to_string()),
+            ParsedValue::Character("Caf\u{00E9}".to_string()),
         ]
     );
 }
@@ -265,19 +291,19 @@ fn parser_decodes_uncompressed_big_endian_fixture_end_to_end() {
             sas_rs::parser::contracts::ParsedRow {
                 values: vec![
                     ParsedValue::Numeric(1.0.into()),
-                    ParsedValue::String("ABCD".to_string()),
+                    ParsedValue::Character("ABCD".to_string()),
                 ],
             },
             sas_rs::parser::contracts::ParsedRow {
                 values: vec![
                     ParsedValue::Numeric(2.5.into()),
-                    ParsedValue::String("EFGH".to_string()),
+                    ParsedValue::Character("EFGH".to_string()),
                 ],
             },
             sas_rs::parser::contracts::ParsedRow {
                 values: vec![
                     ParsedValue::Numeric(3.0.into()),
-                    ParsedValue::String("IJKL".to_string()),
+                    ParsedValue::Character("IJKL".to_string()),
                 ],
             },
         ]
@@ -379,25 +405,25 @@ fn parser_decodes_row_compressed_rows_stored_across_meta_and_mix_pages() {
             sas_rs::parser::contracts::ParsedRow {
                 values: vec![
                     ParsedValue::Numeric(1.0.into()),
-                    ParsedValue::String("ABCD".to_string()),
+                    ParsedValue::Character("ABCD".to_string()),
                 ],
             },
             sas_rs::parser::contracts::ParsedRow {
                 values: vec![
                     ParsedValue::Numeric(2.5.into()),
-                    ParsedValue::String("EFGH".to_string()),
+                    ParsedValue::Character("EFGH".to_string()),
                 ],
             },
             sas_rs::parser::contracts::ParsedRow {
                 values: vec![
                     ParsedValue::Numeric(3.0.into()),
-                    ParsedValue::String("IJKL".to_string()),
+                    ParsedValue::Character("IJKL".to_string()),
                 ],
             },
             sas_rs::parser::contracts::ParsedRow {
                 values: vec![
                     ParsedValue::Numeric(4.25.into()),
-                    ParsedValue::String("MNOP".to_string()),
+                    ParsedValue::Character("MNOP".to_string()),
                 ],
             },
         ]
@@ -424,19 +450,19 @@ fn parser_decodes_binary_compressed_rows_from_meta_subheaders() {
             sas_rs::parser::contracts::ParsedRow {
                 values: vec![
                     ParsedValue::Numeric(1.0.into()),
-                    ParsedValue::String("ABCD".to_string()),
+                    ParsedValue::Character("ABCD".to_string()),
                 ],
             },
             sas_rs::parser::contracts::ParsedRow {
                 values: vec![
                     ParsedValue::Numeric(2.5.into()),
-                    ParsedValue::String("EFGH".to_string()),
+                    ParsedValue::Character("EFGH".to_string()),
                 ],
             },
             sas_rs::parser::contracts::ParsedRow {
                 values: vec![
                     ParsedValue::Numeric(3.0.into()),
-                    ParsedValue::String("IJKL".to_string()),
+                    ParsedValue::Character("IJKL".to_string()),
                 ],
             },
         ]
@@ -483,8 +509,12 @@ fn parser_preserves_non_8_byte_numeric_cells_without_parser_core_rejection() {
     assert_eq!(
         batch.rows[0].values,
         vec![
-            ParsedValue::Numeric(NumericValue::deferred_bytes(vec![0x78, 0x56, 0x34, 0x12])),
-            ParsedValue::String("ABCD".to_string()),
+            ParsedValue::Numeric(NumericValue::Float64 {
+                value: f64::from_bits(0x1234_5678_0000_0000),
+                raw_bits: 0x1234_5678_0000_0000,
+                missing_tag: None,
+            }),
+            ParsedValue::Character("ABCD".to_string()),
         ]
     );
 }
@@ -580,7 +610,7 @@ fn parser_decodes_real_gb18030_text_values_honestly() {
 
     assert_eq!(
         batch.rows[0].values,
-        vec![ParsedValue::String("小类_长筒袜　".to_string())]
+        vec![ParsedValue::Character("小类_长筒袜　".to_string())]
     );
 }
 
@@ -673,6 +703,27 @@ fn parser_infers_semantic_types_and_column_metadata_from_fixture_formats() {
     assert_eq!(
         parsed.metadata.columns[3].semantic_type,
         SemanticTypeHint::Duration
+    );
+
+    let mut parsed = parser
+        .parse(ParserInput::from_bytes(
+            "semantic-fixture.sas7bdat",
+            minimal_sas_fixture::build_fixture(&definition),
+        ))
+        .expect("semantic fixture should parse for row decoding");
+    let batch = parsed
+        .next_batch(1)
+        .expect("batch decoding should succeed")
+        .expect("expected one semantic row");
+
+    assert_eq!(
+        batch.rows[0].values,
+        vec![
+            ParsedValue::DateTime(0.0.into()),
+            ParsedValue::Date(0.0.into()),
+            ParsedValue::Time(0.0.into()),
+            ParsedValue::Duration(60.0.into()),
+        ]
     );
 }
 

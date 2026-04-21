@@ -299,22 +299,27 @@ enum TrustedReaderError {
     Skipped(String),
 }
 
+/// Return the repository path for the sample SAS fixture corpus.
 pub fn sample_corpus_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("sample-sas-datasets")
 }
 
+/// Return the named real-file regression cases used by validation sweeps.
 pub fn real_regression_cases() -> &'static [RegressionCase] {
     REGRESSION_CASES
 }
 
+/// Return the differential-validation fixture contracts.
 pub fn differential_fixture_specs() -> &'static [DifferentialFixtureSpec] {
     DIFFERENTIAL_FIXTURES
 }
 
+/// Return the catalog of fixtures intentionally classified as invalid.
 pub fn expected_invalid_sample_fixtures() -> &'static [InvalidFixtureCase] {
     EXPECTED_INVALID_FIXTURES
 }
 
+/// Classify a probe result against the expected-invalid catalog.
 pub fn classify_sample_corpus_fixture(result: &ProbeResult) -> CorpusFixtureStatus {
     if result.is_readable() {
         return CorpusFixtureStatus::Readable;
@@ -333,6 +338,7 @@ pub fn classify_sample_corpus_fixture(result: &ProbeResult) -> CorpusFixtureStat
     }
 }
 
+/// Probe one SAS fixture and summarize whether parsing and row decoding succeeded.
 pub fn probe_file(path: &Path, batch_size_rows: usize) -> ProbeResult {
     let file_name = path
         .file_name()
@@ -400,6 +406,7 @@ pub fn probe_file(path: &Path, batch_size_rows: usize) -> ProbeResult {
     }
 }
 
+/// Sweep a sample-corpus directory and aggregate probe results for each `.sas7bdat` file.
 pub fn sweep_sample_corpus(
     root: &Path,
     batch_size_rows: usize,
@@ -432,6 +439,7 @@ pub fn sweep_sample_corpus(
     })
 }
 
+/// Run parquet differential validation for each configured fixture.
 pub fn run_differential_validation(output_root: &Path) -> DifferentialReport {
     let mut results = Vec::with_capacity(DIFFERENTIAL_FIXTURES.len());
     for spec in DIFFERENTIAL_FIXTURES {

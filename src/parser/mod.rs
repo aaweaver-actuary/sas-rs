@@ -1,23 +1,44 @@
+use std::error::Error;
+use std::fmt::{self, Display, Formatter};
 use std::io::{Read, Seek, SeekFrom};
 
 use encoding_rs::{Encoding, GB18030, ISO_8859_15, WINDOWS_1251, WINDOWS_1252};
 
+/// Compression-signature helpers for SAS metadata.
 pub mod compression_signature;
-pub mod constants;
+mod constants;
+/// Stable public parser contracts and supported-subset descriptors.
 pub mod contracts;
+/// SAS text encoding descriptors.
 pub mod encoding;
+/// SAS endianness descriptors.
 pub mod endianness;
+/// Raw layout offset tables for SAS headers and subheaders.
 pub mod layouts;
+mod offsets;
+/// Curated raw parser constants exposed for tests and fixture builders.
+pub mod parser_constants;
+/// Row-decode helpers for public parser integrations.
 pub mod row;
+/// Physical SAS column-type descriptors.
 pub mod sas_column_type;
+/// SAS file-header decoding helpers.
 pub mod sas_file_header;
-pub mod sas_layout;
+/// Metadata accumulation helpers used while parsing SAS pages.
 pub mod sas_metadata_accumulator;
+/// SAS page-header decoding helpers.
+pub mod sas_page_header;
+/// SAS page-type classifiers.
 pub mod sas_page_type;
+/// SAS subheader classification and parsing helpers.
 pub mod subheader;
+/// Metadata text-reference helpers.
 pub mod text_ref;
+/// Parser traits for embedders and alternate data sources.
 pub mod traits;
+/// Shared parser type aliases.
 pub mod types;
+/// Public parser error and unsupported-feature types.
 pub mod unsupported_features;
 
 pub use contracts::{
@@ -26,15 +47,43 @@ pub use contracts::{
     SUPPORTED_SUBSET, SasColumn, SasMetadata, SasMissingTag, SemanticTypeHint, SupportedSubset,
     WordSize,
 };
+pub use layouts::SasLayout;
+pub use offsets::ParserOffsets;
+pub use parser_constants::ParserConstants;
 pub use sas_file_header::SasFileHeader;
+pub use sas_page_type::SasPageType as SasPageKind;
 pub use subheader::SasSubheaderSignature;
+pub use text_ref::TextRef;
+pub use traits::Sas7bdatParser;
+pub use unsupported_features::{ParserError, UnsupportedFeature};
 
-use self::contracts::{PageRowSource, SubheaderRowRef};
+use self::constants::{
+    SAS7BDAT_DEFAULT_ENCODING_CODE as DEFAULT_ENCODING_CODE,
+    SAS7BDAT_LATIN1_ENCODING_CODE as LATIN1_ENCODING_CODE,
+    SAS7BDAT_UTF8_ENCODING_CODE as UTF8_ENCODING_CODE,
+    SAS7BDAT_WINDOWS_1252_ENCODING_CODE as WINDOWS_1252_ENCODING_CODE,
+};
+use self::contracts::PageRowSource;
 use self::row::{parse_row, parse_subheader_row};
+use self::sas_metadata_accumulator::SasMetadataAccumulator;
+use self::sas_page_header::SasPageHeader;
+use self::sas_page_type::SasPageType;
+use self::sas_page_type::SasPageType::{Amd, Data, Meta, Mix};
 use self::subheader::parse_meta_page;
 
-use sas_metadata_accumulator::SasMetadataAccumulator;
+impl Display for ParserError {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidFormat(message) => formatter.write_str(message),
+            Self::Unsupported(feature) => feature.fmt(formatter),
+            Self::Io(message) => formatter.write_str(message),
+        }
+    }
+}
 
+impl Error for ParserError {}
+
+/// Default parser for the crate's supported SAS7BDAT subset.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct SupportedSas7bdatParser;
 
@@ -167,7 +216,7 @@ fn parse_supported_subset(
                     subheader_rows: Vec::new(),
                 });
             }
-            SasPageKind::Unknown(other) => {
+            SasPageType::Unknown(other) => {
                 return Err(ParserError::Unsupported(UnsupportedFeature::PageType(
                     other,
                 )));
@@ -193,6 +242,7 @@ fn parse_supported_subset(
 }
 
 impl ParsedSas7bdat {
+    /// Decode and return the next batch of rows, or `None` at end of stream.
     pub fn next_batch(&mut self, batch_size_rows: usize) -> Result<Option<RowBatch>, ParserError> {
         if batch_size_rows == 0 {
             return Err(ParserError::InvalidFormat(
@@ -211,6 +261,7 @@ impl ParsedSas7bdat {
         self.next_row_index += rows.len();
 
         Ok(Some(RowBatch {
+            schema: self.row_batch_schema.clone(),
             row_index_start,
             rows,
         }))

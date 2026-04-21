@@ -1,1 +1,1 @@
-pub use super::Endianness;
+pub use crate::parser::endianness::Endianness;

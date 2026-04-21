@@ -37,9 +37,9 @@
 ///
 /// assert_eq!(request.transform.tuning.batch_size_rows, 256);
 /// ```
-
 use super::{DecoderContract, SinkContract, SourceContract, TransformContract};
 
+/// End-to-end request accepted by the public transform service boundary.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TransformRequest {
     /// Source dataset contract.

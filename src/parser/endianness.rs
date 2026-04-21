@@ -1,10 +1,14 @@
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// Byte order for SAS numeric and integer fields.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Endianness {
+    /// Little-endian byte order.
     Little,
+    /// Big-endian byte order.
     Big,
 }
 
 impl Endianness {
+    /// Decode an endianness marker from the parser's normalized byte value.
     pub fn from_u8(value: u8) -> Option<Self> {
         match value {
             0 => Some(Self::Little),
@@ -13,6 +17,7 @@ impl Endianness {
         }
     }
 
+    /// Return the parser's normalized byte marker for this endianness.
     pub fn as_u8(&self) -> u8 {
         match self {
             Self::Little => 0,
@@ -20,10 +25,12 @@ impl Endianness {
         }
     }
 
+    /// Report whether the byte order is little-endian.
     pub fn is_little(&self) -> bool {
         matches!(self, Self::Little)
     }
 
+    /// Report whether the byte order is big-endian.
     pub fn is_big(&self) -> bool {
         matches!(self, Self::Big)
     }

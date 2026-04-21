@@ -1,24 +1,41 @@
+use super::contracts::{self, CompressionMode, SasMetadata};
+use super::subheader::finalize_columns;
+use super::{ParserError, SasLayout, TextRef};
+
+#[derive(Debug, Clone, Default)]
+pub(crate) struct ColumnMetadataState {
+    pub(crate) name_ref: Option<TextRef>,
+    pub(crate) kind: Option<super::contracts::ColumnKind>,
+    pub(crate) offset: Option<usize>,
+    pub(crate) width: Option<usize>,
+    pub(crate) label_ref: Option<TextRef>,
+    pub(crate) format_ref: Option<TextRef>,
+    pub(crate) format_width: Option<u16>,
+    pub(crate) format_digits: Option<u16>,
+    pub(crate) informat_name: Option<String>,
+}
+
 #[derive(Debug, Clone)]
-pub struct SasMetadataAccumulator {
-    table_name: String,
-    file_label: String,
-    row_count: usize,
-    row_length: usize,
-    page_row_count: usize,
-    page_size: usize,
-    page_count: usize,
-    text_encoding_code: u8,
-    declared_column_count: Option<usize>,
-    parsed_name_count: usize,
-    parsed_attr_count: usize,
-    parsed_format_count: usize,
-    text_blobs: Vec<Vec<u8>>,
-    columns: Vec<ColumnMetadataState>,
-    compression: CompressionMode,
+pub(crate) struct SasMetadataAccumulator {
+    pub(crate) table_name: String,
+    pub(crate) file_label: String,
+    pub(crate) row_count: usize,
+    pub(crate) row_length: usize,
+    pub(crate) page_row_count: usize,
+    pub(crate) page_size: usize,
+    pub(crate) page_count: usize,
+    pub(crate) text_encoding_code: u8,
+    pub(crate) declared_column_count: Option<usize>,
+    pub(crate) parsed_name_count: usize,
+    pub(crate) parsed_attr_count: usize,
+    pub(crate) parsed_format_count: usize,
+    pub(crate) text_blobs: Vec<Vec<u8>>,
+    pub(crate) columns: Vec<ColumnMetadataState>,
+    pub(crate) compression: CompressionMode,
 }
 
 impl SasMetadataAccumulator {
-    pub fn new(
+    pub(crate) fn new(
         table_name: String,
         page_size: usize,
         page_count: usize,
@@ -43,19 +60,19 @@ impl SasMetadataAccumulator {
         }
     }
 
-    pub fn compression(&self) -> CompressionMode {
+    pub(crate) fn compression(&self) -> CompressionMode {
         self.compression
     }
 
-    pub fn page_row_count(&self) -> usize {
+    pub(crate) fn page_row_count(&self) -> usize {
         self.page_row_count
     }
 
-    pub fn row_length(&self) -> usize {
+    pub(crate) fn row_length(&self) -> usize {
         self.row_length
     }
 
-    pub fn into_metadata(self, layout: SasLayout) -> Result<SasMetadata, ParserError> {
+    pub(crate) fn into_metadata(self, layout: SasLayout) -> Result<SasMetadata, ParserError> {
         let columns = finalize_columns(&self)?;
         Ok(SasMetadata {
             subset: contracts::supported_subset(

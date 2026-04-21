@@ -18,9 +18,9 @@
 /// assert_eq!(transform.selection.len(), 2);
 /// assert_eq!(transform.execution.label(), "streaming");
 /// ```
-
 use super::{ExecutionModel, TransformTuning};
 
+/// Transform-time projection, filtering, and execution settings.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TransformContract {
     /// Optional explicit column projection. An empty list means "all columns".

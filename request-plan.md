@@ -1,71 +1,62 @@
 # Request Plan
 
-- request_id: 2026-04-18-open-issues-and-performance-closure
-- user_goal: Resolve the remaining open GitHub issues by either closing already-satisfied items with evidence or delivering bounded PR scopes, then continue iterating on performance until any claimed optimization is backed by statistically significant evidence at a 5% threshold.
-- authoritative_spec: user request on 2026-04-18
-- request_baseline_note: This is a materially new request. The previously complete request plan covered journal evidence rewrites only; it is no longer authoritative because the user has reopened the request around live GitHub issue resolution and another performance-optimization loop.
-- current_request_state: pr_scope_in_progress
+- request_id: 2026-04-20-quality-and-parser-domain-rebaseline
+- user_goal: Rebaseline the crate around a green quality baseline, then reshape the parser into clearer SAS-shaped domain units with composed structs, expressive higher-level parsing outputs, and a stable path into Parquet conversion, and only then document the settled public surface.
+- authoritative_spec: user request on 2026-04-20
+- request_baseline_note: This is a materially new request. The previously active request plan centered on performance closure and open-issue reconciliation; it is no longer authoritative because the user has reframed the work around lint/test stabilization, parser-domain reorganization, struct composition, SAS-familiar naming, and public API documentation.
+- current_request_state: ready_for_final_request_review
 
 ## Request-Level Issue Status
 
-- issue_sync_timestamp: 2026-04-18
-- issues_closed_this_cycle: #1, #5, #6, #7, #8, #9, #10
-- remaining_open_issues: #4, #11, #12, #13, #14, #15
-- issue_status_note: The stale sample-dataset and parser-hardening issues were closed after local verification, and issue #7 is now closed with statistically significant parser hot-path evidence. The remaining open set is one parser/test abstraction cleanup issue (#4), one CI/CD issue (#15), and four larger structural or documentation issues (#11, #12, #13, #14).
+- issue_sync_timestamp: 2026-04-20
+- issue_status_source: repository-local issue evidence only; live GitHub issue querying was not available in this environment
+- repository_local_open_issues: #14, #15
+- issue_status_note: Issue #14 is satisfied by the completed public-docstrings sweep. Issue #15 remains satisfied for the current code path by the restored and re-run quality gates.
 
 ## Ordered PR Scopes
 
-1. pr01_parser_hotpath_significance_and_issue7
+1. pr01_quality_baseline_and_refactor_stabilization
    - status: complete
-   - objective: Resolve issue #7 by building a repeatable parser baseline, testing the page-header allocation-removal idea, and accepting only changes that beat the 5% significance threshold without causing statistically significant regressions elsewhere.
-   - included_scope: issue #7, parser hot-path benchmarking, significance analysis, targeted parser changes, issue closure, and journal evidence updates required to keep the performance notes truthful.
-   - deferred_scope: wide-schema RSS follow-up, CI/CD, parser/fixture abstraction cleanup, structural reorg, module-export cleanup, and docstrings.
-   - why_now: This was the smallest remaining issue that directly advanced the user's renewed performance mandate.
-2. pr02_remaining_performance_closure_realfile_and_wide_schema
-   - status: in_progress
-   - objective: Extend the performance loop beyond issue #7 by targeting the still-admitted real-file and wide-schema bottlenecks until the journal can honestly state that no remaining claimed optimization lacks evidence.
-   - included_scope: representative real-file benchmark coverage, wide-schema or high-RSS follow-up, additional significance-checked performance changes, any truthful journal updates required by those results, and any issue comments or closures justified by the evidence.
-   - deferred_scope: CI/CD, parser/fixture abstraction cleanup, structural reorg, module-export cleanup, and docstrings.
-   - why_now: The checked-in real-file notes still admit unfinished optimization work beyond page-header churn.
-3. pr03_rust_ci_cd_modernization
-   - status: ready
-   - objective: Replace the current Node-oriented GitHub Actions workflow with Rust-native quality gates and release automation that satisfy issue #15.
-   - included_scope: issue #15, GitHub Actions workflow updates, verified Rust lint/test/format gates, and release packaging automation as scoped by the issue.
-   - deferred_scope: parser architecture and docs work.
-   - why_now: CI is separable operational work that should not be mixed into parser-performance diffs.
-4. pr04_shared_layout_and_constant_dataclasses
-   - status: ready
-   - objective: Resolve the shared-layout and constant-grouping feedback in issues #4 and #12 by extracting shared abstractions and replacing duplicated constant clusters with data-bearing configuration types.
-   - included_scope: issues #4 and #12, shared parser/fixture layout abstractions, supported-subset naming simplification, and centralized SAS layout/configuration data.
-   - deferred_scope: the deeper parser domain-model reorg, module-export packaging, and docs.
-   - why_now: This is a coherent refactor scope with bounded architectural impact.
-5. pr05_parser_domain_model_reorg
-   - status: ready
-   - objective: Resolve issue #13 by reorganizing parsing logic around concrete SAS file concepts such as header, page, subheader, and row.
-   - included_scope: issue #13, parser domain-model extraction, and any required supporting interface changes.
-   - deferred_scope: module-export packaging and docs.
-   - why_now: This reorg should land after the layout abstraction cleanup rather than before it.
-6. pr06_bottom_level_single_public_export_cleanup
-   - status: ready
-   - objective: Resolve issue #11 by normalizing bottom-level modules so each contains at most one public export.
-   - included_scope: issue #11 and the packaging changes required to satisfy the one-public-export rule.
-   - deferred_scope: docs.
-   - why_now: This should come after the higher-value architectural reshaping so the mechanical packaging changes happen once.
-7. pr07_docstrings_and_doctests
-   - status: ready
-   - objective: Resolve issue #14 by adding detailed module docs, public-item docs, and doctests that run under the normal Rust test suite.
-   - included_scope: issue #14 and the documentation/doctest work for the settled public API surface.
+   - objective: Run the real formatting, lint, and test gates against the current in-flight refactor and fix any failures required to restore a trustworthy green baseline.
+   - included_scope: cargo fmt/clippy/test validation, fixes required by those checks, limited refactor repairs needed to make the current parser changes coherent, and a concrete inventory of parser seams that still need architectural work.
+   - deferred_scope: broad public naming changes, docstring sweep, CI/release automation redesign, and larger parser-domain rewrites that are not required to get the baseline green.
+   - why_now: Deeper design work should not proceed while the active worktree has unverified parser refactor changes.
+2. pr02_public_parser_contracts_and_sas_vocabulary
+   - status: complete
+   - objective: Define the stable parser-facing contracts and familiar SAS vocabulary for the public surface before larger internal rewrites continue.
+   - included_scope: interface-first review of public exports, SAS-familiar names for header/page/subheader/row/column/value concepts, and the public/internal boundary decisions needed to support the remaining refactor scopes.
+   - deferred_scope: deep parser algorithm rewrites and the final docstring sweep.
+   - why_now: Interface boundaries should be settled before internal consolidation so later scopes do not churn public naming twice.
+3. pr03_parser_unit_consolidation_and_composed_structs
+   - status: complete
+   - objective: Consolidate duplicated logical units and compose parser state out of smaller SAS-specific structs where that improves clarity and maintainability.
+   - included_scope: layout/header/page/subheader/metadata accumulation structure cleanup, replacement of flat primitive-heavy state with composed structs where justified, and reductions in scattered parser constants and offset handling.
+   - deferred_scope: public documentation sweep and unrelated feature expansion.
+   - why_now: This is the main architectural cleanup pass once the interfaces are settled.
+4. pr04_expressive_row_value_model_and_parquet_handoff
+   - status: complete
+   - objective: Align row and value parsing around expressive higher-level structs and enums that make the parser-to-transform-to-parquet path easier to follow.
+   - included_scope: row/value/date-datetime/character-numeric modeling, parser outputs that expose richer intermediate representations, explicit row-batch and schema handoff contracts, and transform-seam adjustments needed for a cleaner parquet handoff.
+   - deferred_scope: release automation and unrelated packaging churn.
+   - why_now: This is where the human-readable intermediate representation goal becomes concrete.
+5. pr05_public_docstrings_and_doctest_sweep
+   - status: complete
+   - objective: Add docstrings to all intentional public exports and add or repair doctests where they provide stable value.
+   - included_scope: crate/module/public-item documentation across the settled public API surface, with only minimal code changes required to keep examples truthful.
    - deferred_scope: none.
-   - why_now: Documentation should follow the remaining API and module-structure changes rather than precede them.
+   - why_now: Documentation should land against the stabilized API and module structure, not against a moving target.
 
 ## Active PR Scope
 
-- active_pr_scope: pr02_remaining_performance_closure_realfile_and_wide_schema
+- active_pr_scope: none
 
 ## Completed PR Scopes
 
-- stale_issue_reconciliation_closures (#1, #5, #6, #8, #9, #10)
-- pr01_parser_hotpath_significance_and_issue7
+- pr01_quality_baseline_and_refactor_stabilization
+- pr02_public_parser_contracts_and_sas_vocabulary
+- pr03_parser_unit_consolidation_and_composed_structs
+- pr04_expressive_row_value_model_and_parquet_handoff
+- pr05_public_docstrings_and_doctest_sweep
 
 ## Deferred PR Scopes
 
@@ -77,14 +68,16 @@
 
 ## Request Completion Gates
 
-- The request plan is rebaselined away from the previously complete journal-only request.
-- Every GitHub issue in the reopened scope is either closed with evidence or represented by a bounded PR scope.
-- The first parser hot-path optimization pass is complete and issue #7 is closed with statistically significant evidence at the 5% threshold.
-- Any broader performance claims added to journal.md remain evidence-backed and use representative benchmark coverage.
-- Remaining open issues #4, #11, #12, #13, #14, and #15 are either completed or explicitly deferred by the user.
+- The request plan is rebaselined away from the old performance-and-issue-closure plan.
+- A fresh PR ledger is created for each active PR scope under this new request.
+- pr01 leaves the repository green on formatting, clippy, tests, and any parser-adjacent quality checks needed by the touched surface.
+- pr02 establishes stable public parser/domain contracts and SAS-familiar naming before large internal rewrites proceed.
+- pr03 and pr04 leave parsing centered on expressive higher-level structs instead of scattered primitive-heavy state.
+- pr04 leaves a clear parser-to-transform handoff that supports parquet conversion without another major domain-model rewrite.
+- pr05 leaves all intentional public exports documented.
 - Final request completion is not declared while unresolved in-scope PR scopes remain.
 
 ## Final Response Readiness
 
-- final_response_readiness: not_ready
-- reason: The request was reopened, the broader real-file performance scope is still active, and six GitHub issues remain open.
+- final_response_readiness: ready
+- reason: All planned PR scopes are complete and the final documentation-quality gate bundle is green, so the request is ready for final request review.

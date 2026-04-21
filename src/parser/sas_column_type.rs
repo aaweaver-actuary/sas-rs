@@ -1,12 +1,16 @@
 use super::constants::{SAS7BDAT_COLUMN_TYPE_CHR, SAS7BDAT_COLUMN_TYPE_NUM};
 
+/// Physical SAS column storage kind.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SasColumnType {
+    /// Numeric storage backed by SAS floating-point cells.
     Numeric,
+    /// Character storage backed by encoded text bytes.
     Character,
 }
 
 impl SasColumnType {
+    /// Return the raw SAS column-type code for this variant.
     pub fn as_code(&self) -> u8 {
         match self {
             SasColumnType::Numeric => SAS7BDAT_COLUMN_TYPE_NUM,
@@ -14,6 +18,7 @@ impl SasColumnType {
         }
     }
 
+    /// Decode a raw SAS column-type code.
     pub fn from_code(code: u8) -> Option<Self> {
         match code {
             SAS7BDAT_COLUMN_TYPE_NUM => Some(SasColumnType::Numeric),

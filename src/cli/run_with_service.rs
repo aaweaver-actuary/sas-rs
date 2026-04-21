@@ -3,11 +3,6 @@
 //! The parent [`crate::cli`] module re-exports [`run_with_service`] from this
 //! leaf module so the public path stays stable after the one-export split.
 
-//! Injectable CLI runner used by tests and embedding callers.
-//!
-//! The parent [`crate::cli`] module re-exports [`run_with_service`] from this
-//! leaf module so the public path stays stable after the one-export split.
-
 use std::ffi::OsString;
 
 use clap::Parser;
@@ -77,7 +72,6 @@ impl TransformArgs {
 ///     }
 /// }
 /// ```
-
 pub fn run_with_service<I, T, S>(args: I, service: &S) -> Result<CommandOutcome, CliError>
 where
     I: IntoIterator<Item = T>,

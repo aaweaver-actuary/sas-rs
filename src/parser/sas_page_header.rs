@@ -1,13 +1,22 @@
-use crate::parser::{constants::SAS7BDAT_MAX_PAGE_HEADER_SIZE, sas_page_type::SasPageType};
+use crate::parser::{
+    constants::{SAS7BDAT_COMPRESSED_PAGE_TYPE_CODE, SAS7BDAT_MAX_PAGE_HEADER_SIZE},
+    sas_page_type::SasPageType,
+};
 
 use super::{ParserDataSource, ParserError, SasLayout, read_page_header, read_u16};
 
+/// Decoded metadata from a single SAS page header.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SasPageHeader {
+    /// Raw page-type bits as stored in the page header.
     pub raw_page_type: u16,
+    /// Classified logical page type.
     pub kind: SasPageType,
+    /// Raw row count or block count carried by the page header.
     pub raw_row_count: usize,
+    /// Number of subheader pointers declared for the page.
     pub subheader_count: usize,
+    /// Whether the page indicates compressed row storage.
     pub uses_compressed_storage: bool,
 }
 
@@ -48,7 +57,7 @@ impl SasPageHeader {
                 page_header_layout.subheader_count_offset,
                 layout.endianness,
             )? as usize,
-            uses_compressed_storage: (raw_page_type & SAS_PAGE_TYPE_COMP) != 0,
+            uses_compressed_storage: (raw_page_type & SAS7BDAT_COMPRESSED_PAGE_TYPE_CODE) != 0,
         })
     }
 }

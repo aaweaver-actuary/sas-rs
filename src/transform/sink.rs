@@ -1,12 +1,24 @@
+//! Public parquet sink traits, plans, reports, and execution helpers.
+
+/// Re-export of the local parquet sink implementation.
 pub mod local_parquet_sink;
+/// Re-export of the sink preparation trait.
 pub mod parquet_sink;
+/// Re-export of parquet sink failures.
 pub mod parquet_sink_error;
+/// Re-export of the sink planning contract.
 pub mod parquet_sink_plan;
+/// Re-export of sink execution reports.
 pub mod parquet_sink_report;
+/// Re-export of the sink status enum.
 pub mod parquet_sink_status;
+/// Re-export of the streaming parquet sink trait.
 pub mod streaming_parquet_sink;
+/// Re-export of the stub parquet sink.
 pub mod stub_parquet_sink;
+/// Re-export of the planned transform execution type.
 pub mod transform_execution;
+/// Re-export of transform execution failures.
 pub mod transform_execution_error;
 
 use std::collections::HashMap;
@@ -28,19 +40,24 @@ use rayon::{ThreadPool, ThreadPoolBuilder};
 
 use crate::parser::contracts::{
     ColumnKind, Endianness, NumericValue, ParsedRow, ParsedSas7bdat, ParsedValue, RowBatch,
-    SasColumn, SasMetadata, SasMissingTag, SemanticTypeHint,
+    RowBatchColumn, RowBatchSchema, RowValueKind, SasMetadata, SasMissingTag,
 };
 
 use super::contracts::{ExecutionModel, SinkFormat, TransformRequest};
 
+/// Plan derived from a transform request for parquet sink execution.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParquetSinkPlan {
+    /// Destination parquet file path.
     pub output_path: PathBuf,
+    /// Maximum number of rows to emit per parquet row group.
     pub row_group_rows: usize,
+    /// Output format requested by the caller.
     pub format: SinkFormat,
 }
 
 impl ParquetSinkPlan {
+    /// Derive a sink plan from the public transform request contract.
     pub fn from_request(request: &TransformRequest) -> Self {
         let row_group_rows = match request.transform.execution {
             ExecutionModel::Streaming => request.transform.tuning.batch_size_rows,
@@ -59,11 +76,15 @@ impl ParquetSinkPlan {
     }
 }
 
+/// Prepares a parquet sink for a transform request.
 pub trait ParquetSink {
+    /// Prepare the sink and return a report describing the resulting sink state.
     fn prepare(&self, plan: ParquetSinkPlan) -> Result<ParquetSinkReport, ParquetSinkError>;
 }
 
+/// Extends `ParquetSink` with row-batch staging support.
 pub trait StreamingParquetSink: ParquetSink {
+    /// Decode, project, and stage batches from the parsed dataset into the sink.
     fn stage_batches(
         &self,
         plan: ParquetSinkPlan,
@@ -72,18 +93,27 @@ pub trait StreamingParquetSink: ParquetSink {
     ) -> Result<ParquetSinkReport, ParquetSinkError>;
 }
 
+/// Report emitted by a parquet sink after planning or execution.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParquetSinkReport {
+    /// Sink plan used for this report.
     pub plan: ParquetSinkPlan,
+    /// Final sink lifecycle status.
     pub status: ParquetSinkStatus,
+    /// Number of rows staged into parquet batches.
     pub staged_row_count: usize,
+    /// Number of non-empty batches staged.
     pub staged_batch_count: usize,
+    /// Size of the written parquet file in bytes.
     pub output_size_bytes: u64,
+    /// Number of batches that used parallel projection work.
     pub parallel_batch_count: usize,
+    /// Maximum number of transform worker threads used by any batch.
     pub transform_threads_used: usize,
 }
 
 impl ParquetSinkReport {
+    /// Build a report for a sink plan that has not staged any rows yet.
     pub fn skeleton(plan: ParquetSinkPlan) -> Self {
         Self {
             plan,
@@ -96,6 +126,7 @@ impl ParquetSinkReport {
         }
     }
 
+    /// Build a report for a sink that staged decoded rows without writing a file.
     pub fn decoded_rows_staged(
         plan: ParquetSinkPlan,
         staged_row_count: usize,
@@ -114,6 +145,7 @@ impl ParquetSinkReport {
         }
     }
 
+    /// Build a report for a sink that completed a parquet write.
     pub fn parquet_written(
         plan: ParquetSinkPlan,
         staged_row_count: usize,
@@ -134,14 +166,19 @@ impl ParquetSinkReport {
     }
 }
 
+/// Lifecycle status for parquet sink work.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ParquetSinkStatus {
+    /// A sink plan exists but no rows have been staged yet.
     SkeletonReady,
+    /// Rows have been decoded and staged without a final parquet write.
     DecodedRowsStaged,
+    /// A parquet file has been fully written.
     ParquetWritten,
 }
 
 impl ParquetSinkStatus {
+    /// Return the stable machine-readable label for this sink status.
     pub fn label(&self) -> &str {
         match self {
             Self::SkeletonReady => "parquet-skeleton",
@@ -151,12 +188,14 @@ impl ParquetSinkStatus {
     }
 }
 
+/// Error raised while planning or executing parquet sink work.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParquetSinkError {
     message: String,
 }
 
 impl ParquetSinkError {
+    /// Construct a sink error from a human-readable message.
     pub fn new(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
@@ -172,41 +211,35 @@ impl Display for ParquetSinkError {
 
 impl Error for ParquetSinkError {}
 
+/// Planned projection and filter execution for a parsed dataset.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TransformExecution {
+    source_schema: Arc<RowBatchSchema>,
     projected_columns: Vec<ProjectionColumn>,
     filter: Option<FilterPredicate>,
     selection_applied: bool,
     parallelism: BatchParallelism,
-    source_endianness: Endianness,
 }
 
 impl TransformExecution {
+    /// Plan transform execution for the supplied request and dataset metadata.
     pub fn from_request(
         request: &TransformRequest,
         metadata: &SasMetadata,
     ) -> Result<Self, TransformExecutionError> {
+        let source_schema = Arc::new(RowBatchSchema::from_metadata(metadata));
         let projected_columns = if request.transform.selection.is_empty() {
-            metadata
+            source_schema
                 .columns
                 .iter()
-                .enumerate()
-                .map(|(index, column)| ProjectionColumn::from_source(index, column))
-                .collect::<Result<Vec<_>, _>>()?
-                .into_iter()
-                .flatten()
+                .flat_map(ProjectionColumn::from_schema)
                 .collect()
         } else {
             let mut projected_columns = Vec::with_capacity(request.transform.selection.len() * 2);
             for name in &request.transform.selection {
-                let (index, column) = metadata
-                    .columns
-                    .iter()
-                    .enumerate()
-                    .find(|(_, column)| column.name == *name)
-                    .ok_or_else(|| {
-                        TransformExecutionError::new(format!("unknown selected column: {name}"))
-                    })?;
+                let column = source_schema.column(name).ok_or_else(|| {
+                    TransformExecutionError::new(format!("unknown selected column: {name}"))
+                })?;
                 if projected_columns
                     .iter()
                     .any(|column: &ProjectionColumn| column.name == *name)
@@ -215,7 +248,7 @@ impl TransformExecution {
                         "duplicate selected column: {name}"
                     )));
                 }
-                projected_columns.extend(ProjectionColumn::from_source(index, column)?);
+                projected_columns.extend(ProjectionColumn::from_schema(column));
             }
             projected_columns
         };
@@ -224,31 +257,39 @@ impl TransformExecution {
             .transform
             .filter
             .as_deref()
-            .map(|expression| FilterPredicate::parse(expression, metadata))
+            .map(|expression| FilterPredicate::parse(expression, source_schema.as_ref()))
             .transpose()?;
 
         Ok(Self {
+            source_schema,
             projected_columns,
             filter,
             selection_applied: !request.transform.selection.is_empty(),
             parallelism: BatchParallelism::from_request(request),
-            source_endianness: metadata.subset.endianness,
         })
     }
 
+    /// Return the number of projected output columns after selection expansion.
     pub fn output_column_count(&self) -> usize {
         self.projected_columns.len()
     }
 
+    /// Report whether the request applied an explicit column selection.
     pub fn selection_applied(&self) -> bool {
         self.selection_applied
     }
 
+    /// Report whether the request applied a row filter.
     pub fn filter_applied(&self) -> bool {
         self.filter.is_some()
     }
 
     fn apply(&self, batch: RowBatch) -> Result<ExecutedBatch, TransformExecutionError> {
+        if batch.schema.as_ref() != self.source_schema.as_ref() {
+            return Err(TransformExecutionError::new(
+                "row batch schema does not match the planned transform execution",
+            ));
+        }
         let threads_used = self.parallelism.threads_for(batch.rows.len());
         let batch = if threads_used > 1 {
             self.apply_parallel(batch, threads_used)?
@@ -314,7 +355,7 @@ impl TransformExecution {
                         projected.name
                     ))
                 })?;
-                typed.push(value, &projected.name, self.source_endianness)?;
+                typed.push(value, &projected.name, self.source_schema.subset.endianness)?;
             }
             row_count += 1;
         }
@@ -374,30 +415,30 @@ struct ProjectionColumn {
 }
 
 impl ProjectionColumn {
-    fn from_source(
-        source_index: usize,
-        column: &SasColumn,
-    ) -> Result<Vec<Self>, TransformExecutionError> {
-        let primary_kind = ProjectionKind::from_source_column(column);
+    fn from_schema(column: &RowBatchColumn) -> Vec<Self> {
+        let primary_kind = ProjectionKind::from_value_kind(column.value_kind);
         let mut projected_columns = vec![Self {
-            source_index,
+            source_index: column.source_index,
             name: column.name.clone(),
-            nullable: primary_kind.is_nullable(),
-            metadata: primary_field_metadata(column),
+            nullable: column.nullable,
+            metadata: column.metadata.clone(),
             kind: primary_kind,
         }];
 
-        if column.kind == ColumnKind::Numeric {
+        if let (Some(missing_tag_column_name), Some(missing_tag_metadata)) = (
+            column.missing_tag_column_name.as_ref(),
+            column.missing_tag_metadata.as_ref(),
+        ) {
             projected_columns.push(Self {
-                source_index,
-                name: missing_tag_column_name(&column.name),
+                source_index: column.source_index,
+                name: missing_tag_column_name.clone(),
                 kind: ProjectionKind::MissingTagUtf8,
                 nullable: true,
-                metadata: missing_tag_field_metadata(column),
+                metadata: missing_tag_metadata.clone(),
             });
         }
 
-        Ok(projected_columns)
+        projected_columns
     }
 }
 
@@ -413,16 +454,14 @@ enum ProjectionKind {
 }
 
 impl ProjectionKind {
-    fn from_source_column(column: &SasColumn) -> Self {
-        match column.kind {
-            ColumnKind::String => Self::Utf8,
-            ColumnKind::Numeric => match column.semantic_type {
-                SemanticTypeHint::Deferred => Self::Float64,
-                SemanticTypeHint::Date => Self::Date32,
-                SemanticTypeHint::Time => Self::Time64Microsecond,
-                SemanticTypeHint::DateTime => Self::TimestampMicrosecond,
-                SemanticTypeHint::Duration => Self::DurationMicrosecond,
-            },
+    fn from_value_kind(value_kind: RowValueKind) -> Self {
+        match value_kind {
+            RowValueKind::Numeric => Self::Float64,
+            RowValueKind::Character => Self::Utf8,
+            RowValueKind::Date => Self::Date32,
+            RowValueKind::Time => Self::Time64Microsecond,
+            RowValueKind::DateTime => Self::TimestampMicrosecond,
+            RowValueKind::Duration => Self::DurationMicrosecond,
         }
     }
 
@@ -436,55 +475,6 @@ impl ProjectionKind {
             Self::DurationMicrosecond => DataType::Duration(TimeUnit::Microsecond),
         }
     }
-
-    fn is_nullable(&self) -> bool {
-        !matches!(self, Self::Utf8)
-    }
-}
-
-fn missing_tag_column_name(column_name: &str) -> String {
-    format!("{column_name}__sas_missing_tag")
-}
-
-fn primary_field_metadata(column: &SasColumn) -> HashMap<String, String> {
-    let mut metadata = HashMap::from([
-        (
-            "sas.kind".to_string(),
-            match column.kind {
-                ColumnKind::Numeric => "numeric",
-                ColumnKind::String => "string",
-            }
-            .to_string(),
-        ),
-        (
-            "sas.semantic_type".to_string(),
-            column.semantic_type.label().to_string(),
-        ),
-    ]);
-    if let Some(label) = &column.metadata.label {
-        metadata.insert("sas.label".to_string(), label.clone());
-    }
-    if let Some(format_name) = &column.metadata.format_name {
-        metadata.insert("sas.format_name".to_string(), format_name.clone());
-    }
-    if let Some(informat_name) = &column.metadata.informat_name {
-        metadata.insert("sas.informat_name".to_string(), informat_name.clone());
-    }
-    if column.kind == ColumnKind::Numeric {
-        metadata.insert(
-            "sas.missing_tag_column".to_string(),
-            missing_tag_column_name(&column.name),
-        );
-    }
-    metadata
-}
-
-fn missing_tag_field_metadata(column: &SasColumn) -> HashMap<String, String> {
-    HashMap::from([
-        ("sas.kind".to_string(), "missing_tag".to_string()),
-        ("sas.parent_column".to_string(), column.name.clone()),
-        ("sas.tag_domain".to_string(), ". _ A-Z".to_string()),
-    ])
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -567,11 +557,17 @@ impl TypedColumn {
                 values.push(materialized_float64(numeric, column_name, endianness)?);
                 Ok(())
             }
-            (Self::Date32(values), ParsedValue::Numeric(numeric)) => {
+            (Self::Float64(_), _) => Err(TransformExecutionError::new(format!(
+                "column {column_name} expected a physical numeric value"
+            ))),
+            (Self::Date32(values), ParsedValue::Date(numeric)) => {
                 values.push(materialized_date32(numeric, column_name, endianness)?);
                 Ok(())
             }
-            (Self::Time64Microsecond(values), ParsedValue::Numeric(numeric)) => {
+            (Self::Date32(_), _) => Err(TransformExecutionError::new(format!(
+                "column {column_name} expected a date value"
+            ))),
+            (Self::Time64Microsecond(values), ParsedValue::Time(numeric)) => {
                 values.push(materialized_time64_micros(
                     numeric,
                     column_name,
@@ -579,7 +575,10 @@ impl TypedColumn {
                 )?);
                 Ok(())
             }
-            (Self::TimestampMicrosecond(values), ParsedValue::Numeric(numeric)) => {
+            (Self::Time64Microsecond(_), _) => Err(TransformExecutionError::new(format!(
+                "column {column_name} expected a time value"
+            ))),
+            (Self::TimestampMicrosecond(values), ParsedValue::DateTime(numeric)) => {
                 values.push(materialized_timestamp_micros(
                     numeric,
                     column_name,
@@ -587,7 +586,10 @@ impl TypedColumn {
                 )?);
                 Ok(())
             }
-            (Self::DurationMicrosecond(values), ParsedValue::Numeric(numeric)) => {
+            (Self::TimestampMicrosecond(_), _) => Err(TransformExecutionError::new(format!(
+                "column {column_name} expected a datetime value"
+            ))),
+            (Self::DurationMicrosecond(values), ParsedValue::Duration(numeric)) => {
                 values.push(materialized_duration_micros(
                     numeric,
                     column_name,
@@ -595,22 +597,27 @@ impl TypedColumn {
                 )?);
                 Ok(())
             }
-            (Self::Utf8(values), ParsedValue::String(value)) => {
+            (Self::DurationMicrosecond(_), _) => Err(TransformExecutionError::new(format!(
+                "column {column_name} expected a duration value"
+            ))),
+            (Self::Utf8(values), ParsedValue::Character(value)) => {
                 values.push(Some(value.clone()));
                 Ok(())
             }
-            (Self::Utf8(_), ParsedValue::Numeric(_)) => Err(TransformExecutionError::new(format!(
-                "column {column_name} expected a string value"
+            (Self::Utf8(_), _) => Err(TransformExecutionError::new(format!(
+                "column {column_name} expected a character value"
             ))),
-            (Self::MissingTag(values), ParsedValue::Numeric(numeric)) => {
+            (Self::MissingTag(values), value) => {
+                let numeric = value.numeric().ok_or_else(|| {
+                    TransformExecutionError::new(format!(
+                        "column {column_name} expected a numeric-compatible value"
+                    ))
+                })?;
                 let (_, missing_tag) =
                     materialized_numeric_parts(numeric, column_name, endianness)?;
                 values.push(missing_tag.map_or(0, |tag| tag.code() as u8));
                 Ok(())
             }
-            (_, ParsedValue::String(_)) => Err(TransformExecutionError::new(format!(
-                "column {column_name} expected a numeric value"
-            ))),
         }
     }
 
@@ -793,7 +800,7 @@ struct FilterPredicate {
 }
 
 impl FilterPredicate {
-    fn parse(expression: &str, metadata: &SasMetadata) -> Result<Self, TransformExecutionError> {
+    fn parse(expression: &str, schema: &RowBatchSchema) -> Result<Self, TransformExecutionError> {
         let tokens = expression.split_whitespace().collect::<Vec<_>>();
         if tokens.len() != 3 {
             return Err(TransformExecutionError::new(format!(
@@ -803,22 +810,17 @@ impl FilterPredicate {
 
         let column_name = tokens[0];
         let operator = FilterOperator::parse(tokens[1], expression)?;
-        let (source_index, column) = metadata
-            .columns
-            .iter()
-            .enumerate()
-            .find(|(_, column)| column.name == column_name)
-            .ok_or_else(|| {
-                TransformExecutionError::new(format!("unknown filter column: {column_name}"))
-            })?;
+        let column = schema.column(column_name).ok_or_else(|| {
+            TransformExecutionError::new(format!("unknown filter column: {column_name}"))
+        })?;
         let literal = FilterLiteral::parse(tokens[2], &column.kind, column_name, &operator)?;
 
         Ok(Self {
-            source_index,
+            source_index: column.source_index,
             column_name: column_name.to_string(),
             operator,
             literal,
-            source_endianness: metadata.subset.endianness,
+            source_endianness: schema.subset.endianness,
         })
     }
 
@@ -830,25 +832,26 @@ impl FilterPredicate {
             ))
         })?;
         match (&self.literal, value) {
-            (FilterLiteral::Numeric(expected), ParsedValue::Numeric(numeric)) => {
+            (FilterLiteral::Numeric(expected), value) => {
+                let numeric = value.numeric().ok_or_else(|| {
+                    TransformExecutionError::new(format!(
+                        "filter column {} resolved to a character unexpectedly",
+                        self.column_name
+                    ))
+                })?;
                 let (actual, _) =
                     materialized_numeric_parts(numeric, &self.column_name, self.source_endianness)?;
                 Ok(self.operator.apply_numeric(actual, *expected))
             }
-            (FilterLiteral::Utf8(expected), ParsedValue::String(actual)) => self
-                .operator
-                .apply_string(actual, expected, &self.column_name),
-            (FilterLiteral::Numeric(_), ParsedValue::String(_)) => {
-                Err(TransformExecutionError::new(format!(
-                    "filter column {} resolved to a string unexpectedly",
-                    self.column_name
-                )))
-            }
-            (FilterLiteral::Utf8(_), ParsedValue::Numeric(_)) => {
-                Err(TransformExecutionError::new(format!(
-                    "filter column {} resolved to a numeric unexpectedly",
-                    self.column_name
-                )))
+            (FilterLiteral::Utf8(expected), value) => {
+                let actual = value.character().ok_or_else(|| {
+                    TransformExecutionError::new(format!(
+                        "filter column {} resolved to a numeric unexpectedly",
+                        self.column_name
+                    ))
+                })?;
+                self.operator
+                    .apply_string(actual, expected, &self.column_name)
             }
         }
     }
@@ -946,12 +949,14 @@ impl FilterLiteral {
     }
 }
 
+/// Error raised while projecting or filtering decoded row batches.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TransformExecutionError {
     message: String,
 }
 
 impl TransformExecutionError {
+    /// Construct a transform execution error from a human-readable message.
     pub fn new(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
@@ -1039,6 +1044,7 @@ fn transform_thread_pool(
     Ok(pool)
 }
 
+/// Stub parquet sink that records staging work without writing output files.
 #[derive(Debug, Default)]
 pub struct StubParquetSink;
 
@@ -1089,6 +1095,7 @@ impl StreamingParquetSink for StubParquetSink {
     }
 }
 
+/// Local filesystem parquet sink used by the default CLI flow.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct LocalParquetSink;
 
@@ -1253,6 +1260,7 @@ fn strip_quotes(token: &str) -> &str {
 mod tests {
     use super::*;
     use crate::parser::SUPPORTED_SUBSET;
+    use crate::parser::contracts::{SasColumn, SemanticTypeHint};
     use crate::transform::contracts::{
         DecodeMode, DecoderContract, ExecutionModel, SinkContract, SinkFormat, SourceContract,
         SourceFormat, TransformContract, TransformRequest, TransformTuning,

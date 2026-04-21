@@ -14,11 +14,11 @@
 ///
 /// assert_eq!(source.format, SourceFormat::Sas7bdat);
 /// ```
-
 use std::path::PathBuf;
 
 use super::SourceFormat;
 
+/// Source dataset location and format contract.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SourceContract {
     /// Filesystem path from which the source loader should read.

@@ -23,9 +23,9 @@
 /// assert_eq!(result.selected_cells_scanned, 4);
 /// assert_eq!(result.checksum, 10);
 /// ```
-
 use super::{ProjectionProbePlan, ProjectionProbeResult};
 
+/// Execute a projection probe against a synthetic batch and return the observed work summary.
 pub fn run_projection_probe(batch: &[u64], plan: &ProjectionProbePlan) -> ProjectionProbeResult {
     assert!(
         plan.column_count > 0,

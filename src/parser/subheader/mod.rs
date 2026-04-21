@@ -1,38 +1,31 @@
+/// Subheader pointer decoding helpers.
 pub mod pointer;
+/// Subheader signature classification helpers.
 pub mod signature;
+
+pub use signature::SasSubheaderSignature;
+
+use self::pointer::SasSubheaderPointer;
 use super::TextRef;
 
-use super::SubheaderRowRef;
 use super::constants::{
-    SAS_COLUMN_TYPE_CHR, SAS_COLUMN_TYPE_NUM, SAS_COMPRESSION_NONE, SAS_COMPRESSION_ROW,
-    SAS_COMPRESSION_ROW_ALT, SAS_COMPRESSION_TRUNC, SAS_SUBHEADER_SIGNATURE_COLUMN_ATTRS,
-    SAS_SUBHEADER_SIGNATURE_COLUMN_FORMAT, SAS_SUBHEADER_SIGNATURE_COLUMN_LIST,
-    SAS_SUBHEADER_SIGNATURE_COLUMN_MASK, SAS_SUBHEADER_SIGNATURE_COLUMN_NAME,
-    SAS_SUBHEADER_SIGNATURE_COLUMN_SIZE, SAS_SUBHEADER_SIGNATURE_COLUMN_TEXT,
-    SAS_SUBHEADER_SIGNATURE_COUNTS, SAS_SUBHEADER_SIGNATURE_ROW_SIZE,
-    SAS7BDAT_COMPRESSION_SIGNATURE_RDC, SAS7BDAT_COMPRESSION_SIGNATURE_RLE,
+    SAS7BDAT_COLUMN_TYPE_CHR as SAS_COLUMN_TYPE_CHR,
+    SAS7BDAT_COLUMN_TYPE_NUM as SAS_COLUMN_TYPE_NUM, SAS7BDAT_COMPRESSION_SIGNATURE_RDC,
+    SAS7BDAT_COMPRESSION_SIGNATURE_RLE,
+    SAS7BDAT_NO_POINTER_COMPRESSION_CODE as SAS_COMPRESSION_NONE,
+    SAS7BDAT_ROW_ALT_POINTER_COMPRESSION_CODE as SAS_COMPRESSION_ROW_ALT,
+    SAS7BDAT_ROW_POINTER_COMPRESSION_CODE as SAS_COMPRESSION_ROW,
+    SAS7BDAT_TRUNCATED_POINTER_COMPRESSION_CODE as SAS_COMPRESSION_TRUNC,
 };
+use super::contracts::SubheaderRowRef;
 use super::contracts::{
-    self, ColumnKind, ColumnMetadata, CompressionMode, Endianness, SasColumn, SasMetadata,
-    SemanticTypeHint,
+    ColumnKind, ColumnMetadata, CompressionMode, Endianness, SasColumn, SemanticTypeHint,
 };
+use super::sas_metadata_accumulator::{ColumnMetadataState, SasMetadataAccumulator};
 use super::{
     ParserError, SasLayout, UnsupportedFeature, byte_at, decode_text_bytes, ensure_len, read_u16,
     read_u32,
 };
-
-#[derive(Debug, Clone, Default)]
-struct ColumnMetadataState {
-    name_ref: Option<TextRef>,
-    kind: Option<ColumnKind>,
-    offset: Option<usize>,
-    width: Option<usize>,
-    label_ref: Option<TextRef>,
-    format_ref: Option<TextRef>,
-    format_width: Option<u16>,
-    format_digits: Option<u16>,
-    informat_name: Option<String>,
-}
 
 #[derive(Debug, Default)]
 pub(crate) struct ParsedMetaPage {
@@ -391,7 +384,9 @@ fn mix_raw_data_offset(
     Ok(data_offset)
 }
 
-fn finalize_columns(metadata: &SasMetadataAccumulator) -> Result<Vec<SasColumn>, ParserError> {
+pub(crate) fn finalize_columns(
+    metadata: &SasMetadataAccumulator,
+) -> Result<Vec<SasColumn>, ParserError> {
     let declared_column_count =
         metadata
             .declared_column_count
@@ -414,7 +409,7 @@ fn finalize_columns(metadata: &SasMetadataAccumulator) -> Result<Vec<SasColumn>,
         let width = column.width.ok_or(ParserError::InvalidFormat(
             "column width metadata is incomplete",
         ))?;
-        let kind = column.kind.clone().ok_or(ParserError::InvalidFormat(
+        let kind = column.kind.ok_or(ParserError::InvalidFormat(
             "column type metadata is incomplete",
         ))?;
         let offset = column.offset.ok_or(ParserError::InvalidFormat(
@@ -638,7 +633,7 @@ fn resolve_text(
     }
 
     let blob = text_blobs
-        .get(text_ref.index as usize)
+        .get(text_ref.index)
         .ok_or(ParserError::InvalidFormat(
             "text reference index is out of bounds",
         ))?;
@@ -662,7 +657,7 @@ fn read_text_ref(
     endianness: Endianness,
 ) -> Result<TextRef, ParserError> {
     Ok(TextRef {
-        index: read_u16(bytes, offset, endianness)?,
+        index: read_u16(bytes, offset, endianness)? as usize,
         offset: read_u16(bytes, offset + 2, endianness)? as usize,
         length: read_u16(bytes, offset + 4, endianness)? as usize,
     })
@@ -702,7 +697,7 @@ mod tests {
             String::new(),
             0,
             0,
-            super::super::constants::UTF8_ENCODING_CODE,
+            super::super::constants::SAS7BDAT_UTF8_ENCODING_CODE,
         )
     }
 

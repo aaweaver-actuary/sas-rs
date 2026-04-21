@@ -1,12 +1,24 @@
+//! Public transform orchestration traits, reports, and default services.
+
+/// Re-export of the filesystem-backed source loader type.
 pub mod file_system_source_loader;
+/// Re-export of the parser-stage execution report.
 pub mod parser_execution_report;
+/// Re-export of the parser-backed transform service.
 pub mod parser_transform_service;
+/// Re-export of the source loader abstraction.
 pub mod source_data_loader;
+/// Re-export of source loader failures.
 pub mod source_data_loader_error;
+/// Re-export of the stub transform service.
 pub mod stub_transform_service;
+/// Re-export of the end-to-end transform report.
 pub mod transform_report;
+/// Re-export of the transform service abstraction.
 pub mod transform_service;
+/// Re-export of transform service failures.
 pub mod transform_service_error;
+/// Re-export of the top-level transform status enum.
 pub mod transform_status;
 
 use std::error::Error;
@@ -23,15 +35,20 @@ use super::sink::{
     StreamingParquetSink, StubParquetSink, TransformExecution, TransformExecutionError,
 };
 
+/// Executes a transform request against a configured parser and sink.
 pub trait TransformService {
+    /// Run the requested transform and return the resulting execution report.
     fn run(&self, request: TransformRequest) -> Result<TransformReport, TransformServiceError>;
 }
 
+/// Opens parser input streams for a declared transform source.
 pub trait SourceDataLoader {
+    /// Open the source as a boxed parser data source.
     fn open(&self, source: &SourceContract)
     -> Result<BoxedParserDataSource, SourceDataLoaderError>;
 }
 
+/// Loads transform sources from the local filesystem.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct FileSystemSourceLoader;
 
@@ -46,12 +63,14 @@ impl SourceDataLoader for FileSystemSourceLoader {
     }
 }
 
+/// Error raised when a transform source cannot be opened.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SourceDataLoaderError {
     message: String,
 }
 
 impl SourceDataLoaderError {
+    /// Construct a source-loader error from a human-readable message.
     pub fn new(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
@@ -73,16 +92,23 @@ impl From<std::io::Error> for SourceDataLoaderError {
     }
 }
 
+/// Summary of the parser work completed for a transform request.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParserExecutionReport {
+    /// Name of the parser subset that decoded the input.
     pub subset_name: String,
+    /// Number of rows observed in the parsed dataset metadata.
     pub row_count: usize,
+    /// Number of output columns after selection expansion.
     pub column_count: usize,
+    /// Whether a column selection changed the default projection.
     pub selection_applied: bool,
+    /// Whether a row filter changed the default row stream.
     pub filter_applied: bool,
 }
 
 impl ParserExecutionReport {
+    /// Return a placeholder report for stubbed transform flows.
     pub fn deferred() -> Self {
         Self {
             subset_name: "deferred".to_string(),
@@ -93,6 +119,7 @@ impl ParserExecutionReport {
         }
     }
 
+    /// Build a parser execution report from a parsed dataset and execution plan.
     pub fn from_execution(
         dataset: &crate::parser::contracts::ParsedSas7bdat,
         execution: &TransformExecution,
@@ -107,20 +134,27 @@ impl ParserExecutionReport {
     }
 }
 
+/// End-to-end report for a transform request.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TransformReport {
+    /// Original transform request that produced this report.
     pub request: TransformRequest,
+    /// Parser-stage summary for the request.
     pub parser: ParserExecutionReport,
+    /// Sink-stage summary for the request.
     pub sink: ParquetSinkReport,
+    /// Final transform lifecycle status.
     pub status: TransformStatus,
 }
 
 impl TransformReport {
+    /// Build a report for a request whose execution remains intentionally stubbed.
     pub fn not_yet_implemented(request: TransformRequest) -> Self {
         let sink = ParquetSinkReport::skeleton(ParquetSinkPlan::from_request(&request));
         Self::with_sink(request, sink)
     }
 
+    /// Build a report around an already-computed sink report.
     pub fn with_sink(request: TransformRequest, sink: ParquetSinkReport) -> Self {
         Self {
             request,
@@ -130,6 +164,7 @@ impl TransformReport {
         }
     }
 
+    /// Build a report for a request whose rows were decoded and staged.
     pub fn decoded_rows_staged(
         request: TransformRequest,
         parser: ParserExecutionReport,
@@ -143,6 +178,7 @@ impl TransformReport {
         }
     }
 
+    /// Build a report for a request that produced a parquet file.
     pub fn parquet_written(
         request: TransformRequest,
         parser: ParserExecutionReport,
@@ -156,6 +192,7 @@ impl TransformReport {
         }
     }
 
+    /// Render the report as a single-line summary suitable for CLI output.
     pub fn summary(&self) -> String {
         format!(
             "status={} input={} output={} execution={} batch_size_rows={} worker_threads={} parser_subset={} parsed_rows={} parsed_columns={} selection_applied={} filter_applied={} sink_status={} row_group_rows={} staged_rows={} staged_batches={} parallel_batches={} transform_threads_used={} output_size_bytes={}",
@@ -192,14 +229,19 @@ impl Display for TransformReport {
     }
 }
 
+/// High-level lifecycle status for a transform request.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TransformStatus {
+    /// The request resolved only to a skeleton execution plan.
     NotYetImplemented,
+    /// Rows were decoded and staged but no final parquet file was written.
     DecodedRowsStaged,
+    /// A parquet file was written for the request.
     ParquetWritten,
 }
 
 impl TransformStatus {
+    /// Return the stable machine-readable label for this status.
     pub fn label(&self) -> &str {
         match self {
             Self::NotYetImplemented => "not-yet-implemented",
@@ -209,12 +251,14 @@ impl TransformStatus {
     }
 }
 
+/// Error raised by a transform service implementation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TransformServiceError {
     message: String,
 }
 
 impl TransformServiceError {
+    /// Construct a transform-service error from a human-readable message.
     pub fn new(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
@@ -254,12 +298,14 @@ impl From<TransformExecutionError> for TransformServiceError {
     }
 }
 
+/// Stub service that only prepares sink plans without running the parser.
 #[derive(Debug, Default)]
 pub struct StubTransformService<S = StubParquetSink> {
     sink: S,
 }
 
 impl<S> StubTransformService<S> {
+    /// Build a stub service around the provided sink implementation.
     pub fn new(sink: S) -> Self {
         Self { sink }
     }
@@ -275,6 +321,7 @@ where
     }
 }
 
+/// Default transform service that wires a source loader, parser, and sink together.
 #[derive(Debug, Default)]
 pub struct ParserTransformService<
     L = FileSystemSourceLoader,
@@ -287,6 +334,7 @@ pub struct ParserTransformService<
 }
 
 impl<L, P, S> ParserTransformService<L, P, S> {
+    /// Build a transform service from explicit loader, parser, and sink dependencies.
     pub fn new(loader: L, parser: P, sink: S) -> Self {
         Self {
             loader,

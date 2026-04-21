@@ -1,9 +1,10 @@
 use super::contracts::{
     ColumnKind, CompressionMode, Endianness, NumericValue, ParsedRow, ParsedValue, SasMetadata,
-    SasMissingTag,
+    SasMissingTag, SemanticTypeHint,
 };
-use super::decode_text_bytes;
+use super::{ParserError, UnsupportedFeature, decode_text_bytes};
 
+/// Decode a raw stored row payload, expanding compression when needed.
 pub fn parse_subheader_row(
     page: &[u8],
     offset: usize,
@@ -34,6 +35,8 @@ pub fn parse_subheader_row(
     }
 }
 
+/// Decode one logical row according to the parsed SAS metadata.
+/// Decode one logical row according to the parsed SAS metadata.
 pub fn parse_row(
     row: &[u8],
     metadata: &SasMetadata,
@@ -51,9 +54,11 @@ pub fn parse_row(
             .ok_or(ParserError::InvalidFormat("column value is truncated"))?;
 
         let value = match column.kind {
-            ColumnKind::Numeric => parse_numeric_value(raw_value, metadata.subset.endianness)?,
+            ColumnKind::Numeric => {
+                parse_numeric_value(raw_value, metadata.subset.endianness, column.semantic_type)?
+            }
             ColumnKind::String => {
-                ParsedValue::String(decode_text_bytes(raw_value, text_encoding_code)?)
+                ParsedValue::Character(decode_text_bytes(raw_value, text_encoding_code)?)
             }
         };
         values.push(value);
@@ -65,14 +70,13 @@ pub fn parse_row(
 fn parse_numeric_value(
     raw_value: &[u8],
     endianness: Endianness,
+    semantic_type: SemanticTypeHint,
 ) -> Result<ParsedValue, ParserError> {
-    match raw_value.len() {
+    let numeric = match raw_value.len() {
         0 => Err(ParserError::InvalidFormat(
             "numeric value width must be greater than zero",
         )),
-        1..=7 => Ok(ParsedValue::Numeric(NumericValue::deferred_bytes(
-            raw_value.to_vec(),
-        ))),
+        1..=7 => materialize_numeric_value(raw_value, endianness),
         8 => {
             let raw_bits = match endianness {
                 Endianness::Little => u64::from_le_bytes(raw_value.try_into().map_err(|_| {
@@ -83,16 +87,52 @@ fn parse_numeric_value(
                 })?),
             };
             let value = f64::from_bits(raw_bits);
-            Ok(ParsedValue::Numeric(NumericValue::Float64 {
+            Ok(NumericValue::Float64 {
                 value,
                 raw_bits,
                 missing_tag: decode_sas_missing_tag(value, raw_bits),
-            }))
+            })
         }
         width => Err(ParserError::Unsupported(UnsupportedFeature::NumericWidth(
             width as u32,
         ))),
+    }?;
+
+    Ok(match semantic_type {
+        SemanticTypeHint::Deferred => ParsedValue::Numeric(numeric),
+        SemanticTypeHint::Date => ParsedValue::Date(numeric),
+        SemanticTypeHint::Time => ParsedValue::Time(numeric),
+        SemanticTypeHint::DateTime => ParsedValue::DateTime(numeric),
+        SemanticTypeHint::Duration => ParsedValue::Duration(numeric),
+    })
+}
+
+fn materialize_numeric_value(
+    raw_value: &[u8],
+    endianness: Endianness,
+) -> Result<NumericValue, ParserError> {
+    let width_bytes = raw_value.len();
+    let mut raw_bits = 0_u64;
+    match endianness {
+        Endianness::Little => {
+            for byte in raw_value.iter().rev() {
+                raw_bits = (raw_bits << 8) | u64::from(*byte);
+            }
+        }
+        Endianness::Big => {
+            for byte in raw_value {
+                raw_bits = (raw_bits << 8) | u64::from(*byte);
+            }
+        }
     }
+    raw_bits <<= (8 - width_bytes) * 8;
+
+    let value = f64::from_bits(raw_bits);
+    Ok(NumericValue::Float64 {
+        value,
+        raw_bits,
+        missing_tag: decode_sas_missing_tag(value, raw_bits),
+    })
 }
 
 fn decode_sas_missing_tag(value: f64, raw_bits: u64) -> Option<SasMissingTag> {
@@ -321,4 +361,39 @@ fn decompress_row_binary(payload: &[u8], row_length: usize) -> Result<Vec<u8>, P
     }
 
     Ok(output)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{CompressionMode, parse_subheader_row};
+
+    #[test]
+    fn binary_row_decode_restores_literal_chunks() {
+        let row = parse_subheader_row(
+            &[
+                0x00, 0x00, b"A"[0], b"B"[0], b"C"[0], b"D"[0], b"E"[0], b"F"[0],
+            ],
+            0,
+            8,
+            CompressionMode::Binary,
+            6,
+        )
+        .expect("binary literal payload should decode");
+
+        assert_eq!(row, b"ABCDEF");
+    }
+
+    #[test]
+    fn binary_row_decode_restores_back_references() {
+        let row = parse_subheader_row(
+            &[0x10, 0x00, b"A"[0], b"B"[0], b"C"[0], 0x30, 0x00],
+            0,
+            7,
+            CompressionMode::Binary,
+            6,
+        )
+        .expect("binary back-reference payload should decode");
+
+        assert_eq!(row, b"ABCABC");
+    }
 }
