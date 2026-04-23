@@ -1,62 +1,58 @@
 # Request Plan
 
-- request_id: 2026-04-20-quality-and-parser-domain-rebaseline
-- user_goal: Rebaseline the crate around a green quality baseline, then reshape the parser into clearer SAS-shaped domain units with composed structs, expressive higher-level parsing outputs, and a stable path into Parquet conversion, and only then document the settled public surface.
-- authoritative_spec: user request on 2026-04-20
-- request_baseline_note: This is a materially new request. The previously active request plan centered on performance closure and open-issue reconciliation; it is no longer authoritative because the user has reframed the work around lint/test stabilization, parser-domain reorganization, struct composition, SAS-familiar naming, and public API documentation.
-- current_request_state: ready_for_final_request_review
+- request_id: 2026-04-22-performance-campaign-rebaseline
+- user_goal: Run a discovery-first performance campaign that identifies the highest-value sas7bdat parser and transform hotspots, experiments with bounded competing implementations, statistically compares them, and lands only validated wins.
+- authoritative_spec: user request on 2026-04-22 plus spec.md and the active performance sweep prompt
+- request_baseline_note: This is a materially new request. The prior 2026-04-20 request plan for quality, parser-domain refactor, and documentation is no longer authoritative.
+- current_request_state: blocked
 
 ## Request-Level Issue Status
 
-- issue_sync_timestamp: 2026-04-20
+- issue_sync_timestamp: 2026-04-22
 - issue_status_source: repository-local issue evidence only; live GitHub issue querying was not available in this environment
-- repository_local_open_issues: #14, #15
-- issue_status_note: Issue #14 is satisfied by the completed public-docstrings sweep. Issue #15 remains satisfied for the current code path by the restored and re-run quality gates.
+- repository_local_open_issues: #1, #6, #7, #8, #9, #10
+- issue_status_note: Issue #7 is the primary performance follow-up; Issue #1 requires representative benchmark coverage; #6/#8/#9/#10 remain active regression guardrails.
 
 ## Ordered PR Scopes
 
-1. pr01_quality_baseline_and_refactor_stabilization
+1. pr01_perf_discovery_and_measurement_rebaseline
    - status: complete
-   - objective: Run the real formatting, lint, and test gates against the current in-flight refactor and fix any failures required to restore a trustworthy green baseline.
-   - included_scope: cargo fmt/clippy/test validation, fixes required by those checks, limited refactor repairs needed to make the current parser changes coherent, and a concrete inventory of parser seams that still need architectural work.
-   - deferred_scope: broad public naming changes, docstring sweep, CI/release automation redesign, and larger parser-domain rewrites that are not required to get the baseline green.
-   - why_now: Deeper design work should not proceed while the active worktree has unverified parser refactor changes.
-2. pr02_public_parser_contracts_and_sas_vocabulary
-   - status: complete
-   - objective: Define the stable parser-facing contracts and familiar SAS vocabulary for the public surface before larger internal rewrites continue.
-   - included_scope: interface-first review of public exports, SAS-familiar names for header/page/subheader/row/column/value concepts, and the public/internal boundary decisions needed to support the remaining refactor scopes.
-   - deferred_scope: deep parser algorithm rewrites and the final docstring sweep.
-   - why_now: Interface boundaries should be settled before internal consolidation so later scopes do not churn public naming twice.
-3. pr03_parser_unit_consolidation_and_composed_structs
-   - status: complete
-   - objective: Consolidate duplicated logical units and compose parser state out of smaller SAS-specific structs where that improves clarity and maintainability.
-   - included_scope: layout/header/page/subheader/metadata accumulation structure cleanup, replacement of flat primitive-heavy state with composed structs where justified, and reductions in scattered parser constants and offset handling.
-   - deferred_scope: public documentation sweep and unrelated feature expansion.
-   - why_now: This is the main architectural cleanup pass once the interfaces are settled.
-4. pr04_expressive_row_value_model_and_parquet_handoff
-   - status: complete
-   - objective: Align row and value parsing around expressive higher-level structs and enums that make the parser-to-transform-to-parquet path easier to follow.
-   - included_scope: row/value/date-datetime/character-numeric modeling, parser outputs that expose richer intermediate representations, explicit row-batch and schema handoff contracts, and transform-seam adjustments needed for a cleaner parquet handoff.
-   - deferred_scope: release automation and unrelated packaging churn.
-   - why_now: This is where the human-readable intermediate representation goal becomes concrete.
-5. pr05_public_docstrings_and_doctest_sweep
-   - status: complete
-   - objective: Add docstrings to all intentional public exports and add or repair doctests where they provide stable value.
-   - included_scope: crate/module/public-item documentation across the settled public API surface, with only minimal code changes required to keep examples truthful.
-   - deferred_scope: none.
-   - why_now: Documentation should land against the stabilized API and module structure, not against a moving target.
+   - objective: Rebaseline the active request around a discovery-first performance campaign and produce the first ranked hotspot list before any behavior-changing optimization lands.
+   - included_scope: fresh request and PR-scope artifacts; representative measurement contract including fts0003 and current wide or parallel-sensitive fixtures; profiler-backed evidence where available; a first-pass ranked hotspot list across parsing, lazy materialization, transform, parquet write, chunking, and parallelism; selection of the first hotspot target for candidate experimentation.
+   - deferred_scope: winning code changes, broad parser rewrites, sink or parallelism rewrites, unrelated compatibility expansion, and any speculative merge that is not measurement-backed.
+   - why_now: The user explicitly requires discovery and measurement before implementation, and the old completed request artifacts cannot remain authoritative.
+2. pr02_parser_io_and_decode_hotspot_candidates
+   - status: blocked
+   - objective: Take the top parser-stage hotspot or small hotspot set from pr01 and run bounded competing implementations against the parser path.
+   - included_scope: parser-stage I/O and decode candidates, repeated statistical comparison on parser benches plus representative real-file coverage including fts0003, correctness and regression validation, and immediate commit/push of a validated winner if one exists.
+   - deferred_scope: lazy materialization, row-batch chunking, sink-write, and worker-scheduling changes unless strictly required for parser-only measurement.
+   - why_now: Parser decode should be isolated from downstream costs before broader runtime changes land.
+3. pr03_lazy_materialization_and_chunking_hotspot_candidates
+   - status: planned
+   - objective: Optimize the next-ranked hotspot set in row materialization, staging buffers, and chunking behavior after parser-stage wins are settled.
+   - included_scope: bounded candidates for materialization and chunking surfaces, transform_write and representative real-file workloads, RSS plus throughput measurements, and immediate commit/push of a validated winner if one exists.
+   - deferred_scope: sink-write internals, worker-threshold tuning, and broad interface redesign unless strictly needed for a zero-cost boundary.
+   - why_now: Allocation churn and batching costs should be measured separately from parser-page access and sink-write costs.
+4. pr04_transform_sink_and_parallelism_hotspot_candidates
+   - status: planned
+   - objective: Optimize transform execution, parquet write cost, and worker-thread or threshold behavior once parser and staging hotspots have been addressed.
+   - included_scope: bounded competing candidates for transform, parquet sink, and parallelism settings; repeated statistical comparison in serial and parallel modes; regression validation; and immediate commit/push of a validated winner if one exists.
+   - deferred_scope: reopening parser contracts, broad CLI redesign, and unrelated compatibility work.
+   - why_now: Sink and scheduling changes are easier to review once upstream parser and materialization costs are better understood.
+5. pr05_campaign_rerun_and_leaderboard_refresh
+   - status: planned
+   - objective: Re-run the accepted-wins stack across the representative suite, refresh the campaign evidence, and leave a clear next experiment backlog.
+   - included_scope: repeated measurements across the representative suite, layered summary of accepted gains, refreshed journal and benchmark notes, and a ranked follow-up hotspot backlog.
+   - deferred_scope: new speculative candidates that were not part of the accepted-wins stack.
+   - why_now: The campaign needs an evidence-consolidation pass to prove the accepted wins compose cleanly and do not overfit to one benchmark.
 
 ## Active PR Scope
 
-- active_pr_scope: none
+- active_pr_scope: pr02_parser_io_and_decode_hotspot_candidates
 
 ## Completed PR Scopes
 
-- pr01_quality_baseline_and_refactor_stabilization
-- pr02_public_parser_contracts_and_sas_vocabulary
-- pr03_parser_unit_consolidation_and_composed_structs
-- pr04_expressive_row_value_model_and_parquet_handoff
-- pr05_public_docstrings_and_doctest_sweep
+- pr01_perf_discovery_and_measurement_rebaseline
 
 ## Deferred PR Scopes
 
@@ -64,20 +60,20 @@
 
 ## Blocked PR Scopes
 
-- none
+- pr02_parser_io_and_decode_hotspot_candidates
 
 ## Request Completion Gates
 
-- The request plan is rebaselined away from the old performance-and-issue-closure plan.
-- A fresh PR ledger is created for each active PR scope under this new request.
-- pr01 leaves the repository green on formatting, clippy, tests, and any parser-adjacent quality checks needed by the touched surface.
-- pr02 establishes stable public parser/domain contracts and SAS-familiar naming before large internal rewrites proceed.
-- pr03 and pr04 leave parsing centered on expressive higher-level structs instead of scattered primitive-heavy state.
-- pr04 leaves a clear parser-to-transform handoff that supports parquet conversion without another major domain-model rewrite.
-- pr05 leaves all intentional public exports documented.
+- The active request plan is rebaselined away from the completed parser-domain refactor and documentation request.
+- A fresh PR ledger is created for each active PR scope in this performance campaign.
+- pr01 produces a repository-specific hotspot ranking and representative measurement contract before any optimization candidate is merged.
+- pr02, pr03, and pr04 each compare baseline versus bounded candidates with repeated measurements and land only validated winners.
+- Representative benchmark coverage includes fts0003 and other checked-in datasets that exercise wide, narrow, compressed, and parallel-sensitive paths.
+- Campaign evidence records whether the biggest wins are in parsing, lazy materialization, transform, parquet writing, chunking, or parallelism.
+- Any winning optimization is committed and pushed promptly once validated for its scope.
 - Final request completion is not declared while unresolved in-scope PR scopes remain.
 
 ## Final Response Readiness
 
-- final_response_readiness: ready
-- reason: All planned PR scopes are complete and the final documentation-quality gate bundle is green, so the request is ready for final request review.
+- final_response_readiness: not_ready
+- reason: pr02 parser-stage candidate work is blocked because the current checkout exposes only one recoverable bounded parser candidate and this mode cannot author the missing competing implementation.

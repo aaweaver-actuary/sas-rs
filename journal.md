@@ -2,6 +2,63 @@
 
 This file tracks the in-scope Rust surface and the evidence currently available for each area. Every section now uses checked-in measurements, validation-harness evidence, or an explicit note that no direct function-level performance measurement exists yet and points to the nearest verified measured path or validating harness.
 
+## PR-01 Performance Discovery Rebaseline
+
+Date: 2026-04-22
+
+Measurement-first contract for the new performance campaign:
+
+- guardrail tests: `cargo test --test parser_decode_contract --test transform_parser_integration --test validation_contract`
+- micro and path-level benches: `assumption_probe`, `parser_decode`, and `transform_write`
+- required representative datasets: `fts0003.sas7bdat`, `10rec.sas7bdat`, and `numeric_1000000_2.sas7bdat`
+- representative release-style confirmation: `target/release/sasrs transform` on `fts0003` and the serial versus parallel `numeric_1000000_2` path
+- profiler policy: `perf`, `cargo-flamegraph`, and `samply` were checked directly and were unavailable in this environment, so this ranking uses repeated Criterion runs, release-style timing, and direct code-path analysis instead
+
+First-pass hotspot ranking for this repository:
+
+1. Wide real-file transform and parquet sink on `fts0003.sas7bdat`
+   - Criterion: `[5.5549 s 5.7019 s 5.9262 s]` for `transform_write_real_file/fts0003_wide_schema_serial`
+   - Release CLI: `8.21 s` wall time and `529364 kB` max RSS
+   - Interpretation: the dominant cost for the representative wide compressed file sits downstream of raw streamed decode, in lazy materialization, typed-column buildup, Arrow batch conversion, parquet write, and chunking behavior
+2. Fixed wide-schema overhead on `10rec.sas7bdat`
+   - Criterion: `[988.47 ms 1.0558 s 1.1385 s]` for `transform_write_real_file/10rec_wide_schema_serial`
+   - Interpretation: a ten-row file still costs about a second end to end, which points at schema width, per-column setup, and sink overhead rather than row-count-scaled parser work
+3. Parser-stage compressed streamed decode on `fts0003.sas7bdat`
+   - Criterion: `[1.2272 s 1.2790 s 1.3459 s]` for `parser_decode_real_file_baseline/fts0003_probe`
+   - Nearby code path: `ParsedSas7bdat::load_next_row_source`, `parse_subheader_row`, and `parse_row`
+   - Interpretation: parser decode is still a meaningful optimization target, but it is materially smaller than the total representative wide-file cost
+4. Narrow supported-subset materialization and sink overhead
+   - Criterion: parser `16384` rows `[2.0207 ms 2.0780 ms 2.1377 ms]` versus transform `16384` rows `[9.9721 ms 10.178 ms 10.483 ms]`; parser `131072` rows `[22.181 ms 23.457 ms 25.576 ms]` versus transform `131072` rows `[57.762 ms 63.643 ms 71.887 ms]`
+   - Interpretation: even outside the wide real-file regime, end-to-end work remains noticeably heavier than parser-only decode
+5. Parallelism thresholds and worker overhead
+   - Criterion: four-thread synthetic runs were slower or neutral across the current supported-subset sizes
+   - Release CLI: `numeric_1000000_2` measured `0.50 s` serial and `0.51 s` with four workers in this environment
+   - Interpretation: the current scheduling thresholds do not earn a top-priority optimization slot yet
+6. Projection-only micro-cost
+   - Criterion: `projection_assumption_probe/16384` at `[39.764 us 41.761 us 43.618 us]` and `projection_assumption_probe/131072` at `[353.44 us 367.04 us 383.30 us]`
+   - Interpretation: projection-only work is measurable but clearly not the dominant bottleneck today
+
+Next parser-stage target for pr02:
+
+- Keep pr02 bounded to the parser-only compressed streamed-decode path exercised by `fts0003`, specifically row-source loading, subheader decompression, raw-row slicing, `parse_row`, and temporary-row allocation behavior.
+- Defer the larger transform, wide-schema materialization, Arrow conversion, parquet writer, and worker-threshold costs to pr03 and pr04 even though they dominate total wide-file runtime, because the current request plan intentionally isolates parser candidates first.
+
+## PR-02 Parser Candidate Execution Status
+
+Date: 2026-04-22
+
+Current pr02 execution result from this checkout:
+
+- parser guardrails are green: cargo test --test parser_decode_contract --test transform_parser_integration --test validation_contract
+- current parser_decode evidence is 16384 at [2.0496 ms 2.1621 ms 2.3353 ms], 131072 at [21.548 ms 22.135 ms 22.853 ms], 262144 at [42.972 ms 44.310 ms 45.787 ms], and parser_decode_real_file_baseline/fts0003_probe at [1.2043 s 1.2497 s 1.3150 s]
+- one historically accepted bounded parser candidate is still identifiable in checked-in evidence: the fixed page-header scratch-buffer replacement for the per-page header allocation in the parser page-header read path
+- the current checkout does not expose a second bounded parser-only candidate with same-baseline comparison evidence inside the requested pr02 hotspot boundary
+- because this run is operating in PR Manager mode and cannot author new parser product code, pr02 is blocked rather than complete; promoting pr03 now would skip an unresolved in-scope gate
+
+Recommendation for the next execution pass:
+
+- keep pr02 active and hand the hotspot boundary back to a backend implementation slice that can add one more bounded parser-stage candidate, benchmark baseline versus both candidates on parser_decode with fts0003, and then either keep the winner or record a true no-winner result
+
 ## Sweep Summary
 
 - In-scope Rust files: 28

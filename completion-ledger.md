@@ -1,79 +1,75 @@
 # Completion Ledger
 
-- pr_scope_id: pr05_public_docstrings_and_doctest_sweep
-- authoritative_spec: user request on 2026-04-20
+- pr_scope_id: pr02_parser_io_and_decode_hotspot_candidates
+- authoritative_spec: user request on 2026-04-22 plus spec.md and the active performance sweep prompt
 - authoritative_request_plan: request-plan.md
-- ledger_baseline_note: Fresh active ledger created on 2026-04-20 because the prior active ledger described completed pr04 expressive row/value and parquet-handoff work and could not remain authoritative for the materially new pr05 public-docstrings and doctest scope.
-- pr_scope_state: complete
-- outcome_status: complete
+- ledger_baseline_note: Fresh active ledger created on 2026-04-22 because the prior active ledger described completed pr01 discovery and could not remain authoritative for this parser-candidate execution scope.
+- pr_scope_state: blocked
+- outcome_status: blocked
 
 ## PR Scope Summary
-- objective: Add truthful documentation across the settled public crate surface and repair stable doctests where examples materially improve reviewability of the parser and transform APIs.
-- issue_membership: repository-local issue alignment only; live GitHub issue sync was not available in this environment.
-- issue_delta_status: Repository-local issue alignment remains stable for pr05. Issue #14 is satisfied by the completed public-docstrings sweep, and Issue #15 remains satisfied by the restored and re-run quality gates.
-- planning_status: The documentation-only scope closed without reopening parser or transform semantics. All intentional public exports surfaced by rustdoc are now documented, one accidental internal boundary was narrowed, and the full gate bundle is green on the current worktree.
+- objective: Evaluate bounded parser-stage candidates inside the pr01-selected fts0003 compressed streamed-decode hotspot and land only a validated winner.
+- issue_membership: repository-local issue evidence only; #7 is the primary parser performance follow-up, #1 requires representative fts0003 benchmark coverage, and #6/#8/#9/#10 remain the active correctness guardrails.
+- issue_delta_status: stable_repository_local_only
+- planning_status: The current checkout contains one historically accepted parser-adjacent optimization in the page-header read path, but this pr02 pass could recover only one explicit bounded parser candidate from checked-in evidence and could not honestly reconstruct a second same-baseline candidate without new product-code work.
 
 ## State Transitions
-1. 2026-04-20: intake -> pr_scope_defined
-   - reason: The active ledger still described completed pr04 work, so a fresh ledger was required for the materially new pr05 documentation scope.
-2. 2026-04-20: pr_scope_defined -> slice_ready
-   - reason: A bounded backend documentation slice was defined around missing public docs, truthful doctest repair, and final gate revalidation without reopening settled parser or transform semantics.
-3. 2026-04-20: slice_ready -> slice_in_progress
-   - reason: The documentation sweep proceeded across parser, transform, validation, and CLI public exports, with rustdoc used as the authoritative backlog.
-4. 2026-04-20: slice_in_progress -> slice_review
-   - reason: The remaining rustdoc backlog, doctest drift, and doc-formatting lint failures were reduced to zero and the required gate reruns completed.
-5. 2026-04-20: slice_review -> awaiting_issue_sync
-   - reason: Repository-local issue alignment was rechecked after the final documentation and doctest fixes.
-6. 2026-04-20: awaiting_issue_sync -> pr_review
-   - reason: No new in-scope issue delta appeared and every documented PR-scope gate had passing evidence.
-7. 2026-04-20: pr_review -> complete
-   - reason: The public-docstrings scope is fully satisfied and no unresolved PR-scope criteria remain.
-
-## Selected Slice
-- selected_slice: pr05_s1_public_docstrings_and_doctest_repairs
-- lane: backend
-- objective: Document the intentional public exports across the settled crate surface, repair the brittle CLI doctests, and keep API examples truthful to the current parser and transform contracts.
-
-## Active Slice Package
-- modify_files: src/lib.rs, src/cli/**, src/parser/**, src/transform/**, src/validation/**, tests/**, README.md if directly needed for public-surface truthfulness, completion-ledger.md
-- read_files: src/**, tests/**, README.md, spec.md, request-plan.md, completion-ledger.md
-- acceptance_criteria:
-  - all intentional public exports across the settled crate surface have docstrings
-  - doctests are added or repaired only where they provide stable value and match the current API
-  - no parser-domain contract or transform-semantics reopening occurs beyond tiny truthfulness corrections
-  - cargo fmt --all --check passes
-  - cargo clippy --all-targets --all-features -- -D warnings passes
-  - cargo test --lib --bins --tests --all-features passes
-- required_commands: cargo rustdoc --lib --all-features -- -D missing-docs; cargo test --doc --all-features; cargo fmt --all --check; cargo clippy --all-targets --all-features -- -D warnings; cargo test --lib --bins --tests --all-features
-- non_goals: parser-contract redesign, layout renaming churn, transform execution redesign, unrelated CI packaging work, or forcing doctests where regular docs are the more stable choice
-- rollback_risk: low to medium; the intended changes are documentation-heavy, but public-boundary decisions must stay aligned with the settled API and doctests must not promise behavior the library does not guarantee
-- escalation_conditions: narrow or hide only if a reviewed public export proves accidental or unstable; otherwise document the settled boundary directly and avoid misleading examples
+1. 2026-04-22: intake -> pr_scope_defined
+   - reason: request-plan.md promotes pr02 as the active PR scope and the old active ledger still described pr01.
+2. 2026-04-22: pr_scope_defined -> slice_ready
+   - reason: The bounded parser-only scope, guardrails, and representative benchmark surface were confirmed from pr01 and the user handoff.
+3. 2026-04-22: slice_ready -> slice_in_progress
+   - reason: The current parser hotspot code, parser benchmark harness, git history, and checked-in journal evidence were inspected to recover comparable candidates before any new runtime change was considered.
+4. 2026-04-22: slice_in_progress -> blocked
+   - reason: The current checkout exposes only one explicit bounded parser candidate with comparable evidence, while the active acceptance criteria require at least two bounded implementation candidates against the same baseline and PR Manager mode cannot create new product-code candidates.
 
 ## Latest Slice Outcome And Evidence Summary
-1. `cargo rustdoc --lib --all-features -- -D missing-docs` now exits 0 after documenting the remaining parser, transform-contract, validation, and CLI public items.
-2. `cargo test --doc --all-features` now exits 0 after the stale CLI exit-code example in `src/cli/run.rs` was updated to match the current stable behavior.
-3. `cargo fmt --all --check`, `cargo clippy --all-targets --all-features -- -D warnings`, and `cargo test --lib --bins --tests --all-features` all exit 0 on the final pass.
-4. The only public-boundary narrowing needed in this scope was making `parser::constants` private while keeping the curated `parser_constants` module public, because the raw constants module is an internal implementation detail.
-5. The scope stayed documentation-focused: no parser-domain redesign or transform-behavior change was required beyond truthfulness repairs for examples and public-private boundaries.
+1. Current executable guardrails passed: cargo test over parser_decode_contract, transform_parser_integration, and validation_contract finished green with 17 parser tests, 10 transform integration tests, and 6 validation tests.
+2. Current parser_decode Criterion evidence measured parser_decode_supported_subset/16384 at [2.0496 ms 2.1621 ms 2.3353 ms], parser_decode_supported_subset/131072 at [21.548 ms 22.135 ms 22.853 ms], parser_decode_supported_subset/262144 at [42.972 ms 44.310 ms 45.787 ms], and parser_decode_real_file_baseline/fts0003_probe at [1.2043 s 1.2497 s 1.3150 s].
+3. Checked-in historical evidence still identifies one accepted bounded parser candidate in the page-header path: replacing a per-page Vec allocation with a fixed 40-byte scratch buffer in the page-header read flow now represented by src/parser/sas_page_header.rs and src/parser/mod.rs.
+4. The same checked-in evidence does not recover a second bounded parser-stage candidate with comparable same-baseline measurements inside the requested pr02 hotspot boundary.
+5. Because this session is running in PR Manager mode, new parser code or new parser benchmark/test implementations cannot be authored here to satisfy the missing second-candidate requirement. That makes the active scope infeasible to complete honestly from the present checkout.
 
 ## PR Scope Completion Gates
 - fresh_ledger_gate: pass
-  - evidence: completion-ledger.md now describes only pr05 and records the active documentation slice instead of the completed pr04 scope.
-- public_docstrings_gate: pass
-  - evidence: rustdoc missing-docs verification now exits 0 for the library with all features enabled.
-- doctest_truthfulness_gate: pass
-  - evidence: cargo test --doc --all-features now exits 0 after the CLI doctests were updated to compare ExitCode values directly on stable Rust.
-- minimal_change_scope_gate: pass
-  - evidence: the scope stayed within documentation, truthfulness, and one public-boundary narrowing decision; no broader redesign was introduced.
-- quality_gate_recording_gate: pass
-  - evidence: cargo fmt --all --check, cargo clippy --all-targets --all-features -- -D warnings, and cargo test --lib --bins --tests --all-features all exit 0 on the final pass.
-- issue_sync_gate: pass
-  - evidence: repository-local issue alignment remains clean for the completed pr05 scope; live GitHub querying was unavailable in this environment.
+  - evidence: completion-ledger.md now describes only pr02 and no longer inherits pr01 discovery completion state.
+- bounded_candidate_inventory_gate: blocked
+  - evidence: only one explicit bounded parser candidate was recoverable from checked-in history and current code: the fixed page-header scratch-buffer change.
+- repeated_same_baseline_comparison_gate: blocked
+  - evidence: current absolute parser_decode numbers were refreshed, but this checkout does not contain a second bounded parser candidate or saved same-baseline comparison artifact for a second candidate.
+- representative_fts0003_coverage_gate: pass
+  - evidence: parser_decode_real_file_baseline/fts0003_probe was rerun successfully at [1.2043 s 1.2497 s 1.3150 s].
+- correctness_guardrail_gate: pass
+  - evidence: cargo test --test parser_decode_contract --test transform_parser_integration --test validation_contract completed green.
+- validated_winner_or_no_winner_gate: blocked
+  - evidence: this pr02 execution pass cannot newly validate a winner or record a true no-winner result against the required two-candidate comparison contract.
+- commit_and_push_gate: blocked
+  - evidence: no new product-code change was made in this scope; therefore no new focused commit or push could be produced.
+- next_scope_recommendation_gate: pass
+  - evidence: do not promote pr03 yet; either keep pr02 active for a backend implementer to produce a second bounded parser candidate inside the same hotspot boundary, or explicitly waive the two-candidate requirement before rebaselining the request.
 
-## Boundary Decision Record
-- intentional_public_exports_left_undocumented_or_hidden: `src/parser/constants.rs` was narrowed behind a private module boundary because it is internal-only raw parser machinery; the curated public `parser_constants` surface remains the truthful stable export for tests and fixture builders.
-- doctest_policy_for_remaining_scope: complete; executable examples were kept only where they remain stable and reviewable against the current API behavior.
+## Commands Run
+- cargo test --test parser_decode_contract --test transform_parser_integration --test validation_contract
+- cargo bench --bench parser_decode -- --noplot --sample-size 15 --measurement-time 0.5 --warm-up-time 0.2
+- git history queries over src/parser/*, benches/parser_decode.rs, and completion-ledger.md to recover prior candidate evidence
+
+## Commit And Push Status
+- worktree_status: dirty_before_and_after_scope
+  - details: benches/README.md, completion-ledger.md, journal.md, and request-plan.md already had local modifications when this scope validation began.
+- branch_status: master tracks origin/master at c7b3465
+- new_commit_created: no
+- new_push_performed: no
+- note: The current branch head is already on origin/master, but this pr02 run did not produce a new validated product-code change to commit or push.
+
+## Recommended Next PR Scope
+- recommendation: keep pr02_parser_io_and_decode_hotspot_candidates active rather than promoting pr03
+- rationale: The parser-only scope is not honestly complete until a backend implementation slice either tests a second bounded parser candidate against the same baseline or the request-level acceptance contract is explicitly relaxed.
+
+## Blockers And Residual Risks
+- blocker: The checkout contains only one explicit bounded parser-stage candidate with recoverable comparison evidence, while the active scope requires at least two bounded implementation candidates against the same baseline.
+- blocker: PR Manager mode forbids authoring the missing second parser candidate or its TDD harness directly.
+- residual_risk: Historical journal evidence references prior candidate comparisons that are not fully reproducible from saved artifacts in this checkout, so claiming pr02 complete would overstate what this run actually revalidated.
 
 ## Next PR-Manager Transition
 - next_state_transition: none
-- trigger: pr05 is complete.
+- trigger: A backend implementation slice produces a second bounded parser candidate and same-baseline measurements, or Request Manager explicitly waives the two-candidate requirement and rebaselines the request.
